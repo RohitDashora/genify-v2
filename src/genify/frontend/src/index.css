@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  @apply bg-surface-muted text-gray-900 antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.yaml-block {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+/* CodeMirror fills panel */
+.genify-cm .cm-editor {
+  @apply rounded-lg border border-border-subtle text-sm;
+  max-height: min(500px, 50vh);
+}
+
+.genify-cm .cm-scroller {
+  max-height: min(500px, 50vh);
+}
+
+/* Library editor uses more vertical space */
+.library-cm .cm-editor {
+  max-height: min(700px, 70vh);
+}
+.library-cm .cm-scroller {
+  max-height: min(700px, 70vh);
+}

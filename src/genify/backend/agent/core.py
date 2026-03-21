@@ -1,0 +1,721 @@
+"""Agent core — the main orchestrator that runs the full agent loop.
+
+Called from routes/sessions.py when the SSE stream is opened.
+Handles: context gathering, planning, execution, pause/resume, finalization.
+"""
+import asyncio
+import json
+import logging
+from collections.abc import AsyncGenerator
+from typing import Any
+
+import yaml
+from psycopg.rows import dict_row
+
+from backend.agent.executor import execute_step, incorporate_answer
+from backend.agent.planner import generate_plan
+from backend.agent.streamer import EventStreamer
+from backend.config import get_config
+from backend.db import SCHEMA
+from backend.llm.client import get_main_llm_client
+from backend.llm.output_converter import yaml_to_markdown
+from backend.mcp.registry import MCPRegistry
+from backend.mcp.tool_manifest import build_tool_manifest, tools_for_auto_gather
+
+logger = logging.getLogger(__name__)
+
+# Serialize MCP gather per session so concurrent GET /stream handlers do not each run a full tool storm.
+# Double-check context_cache after acquire (follower reloads DB and skips gather if leader finished).
+# Single process only; multiple Uvicorn workers need DB advisory lock or workers=1.
+_session_mcp_gather_locks: dict[str, asyncio.Lock] = {}
+_session_mcp_gather_locks_mutex = asyncio.Lock()
+
+
+async def _get_session_mcp_gather_lock(session_id: str) -> asyncio.Lock:
+    async with _session_mcp_gather_locks_mutex:
+        lock = _session_mcp_gather_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _session_mcp_gather_locks[session_id] = lock
+        return lock
+
+
+async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
+    """Full agent loop — yields SSE events.
+
+    Flow:
+    1. Load session from Lakebase
+    2. Load template from Lakebase
+    3. Gather context via MCP tools (cached in session)
+    4. Generate plan via LLM (cached in session)
+    5. Execute plan steps, streaming events
+    6. If interactive + needs input: emit question, set waiting_for_user, return
+    7. On resume: pick up from current_step with user's answer
+    8. Finalize: save completed metadata
+    """
+    streamer = EventStreamer()
+
+    try:
+        # 1. Load session
+        session = _load_session(pool, session_id)
+        if not session:
+            yield streamer.error("not_found", "Session not found")
+            return
+
+        status = session["status"]
+
+        # Handle terminal states
+        if status == "complete":
+            existing_id = _find_completed_id(pool, session_id, session["user_email"])
+            yield streamer.complete(session["generated_yaml"], session_id, completed_id=existing_id)
+            return
+        if status == "failed":
+            yield streamer.error("failed", session.get("error_message", "Session failed"))
+            return
+
+        yield streamer.status("loading", "Loading session and template...")
+
+        # 2. Load template
+        template_yaml = _load_template(pool, session["template_type"], session["template_version"])
+        if not template_yaml:
+            yield streamer.error("template_not_found", "Active template not found")
+            _update_session_status(pool, session_id, "failed", error="Template not found")
+            return
+
+        template = yaml.safe_load(template_yaml)
+
+        # Resume hint (avoid noise on brand-new sessions)
+        if _should_emit_session_resumed(session):
+            yield streamer.trace(
+                "system",
+                "Session resumed",
+                phase="system",
+            )
+
+        # 3. Gather context via MCP tools (serialized per session for concurrent /stream)
+        context = _normalize_context_cache(session.get("context_cache"))
+        if not context:
+            gather_lock = await _get_session_mcp_gather_lock(session_id)
+            if gather_lock.locked():
+                yield streamer.trace(
+                    "system",
+                    "Waiting for MCP context gather from another connection…",
+                    phase="gather",
+                )
+            async with gather_lock:
+                session = _load_session(pool, session_id)
+                if not session:
+                    yield streamer.error("not_found", "Session not found")
+                    return
+                context = _normalize_context_cache(session.get("context_cache"))
+                if not context:
+                    yield streamer.status(
+                        "gathering_context",
+                        "Gathering data context via MCP tools...",
+                    )
+                    out: dict[str, Any] = {}
+                    async for evt in _iter_gather_context_events(session, streamer, out):
+                        yield evt
+                    context = out.get("context") or {}
+                    _save_context_cache(pool, session_id, context)
+                else:
+                    logger.info(
+                        "MCP gather skipped for session %s — context populated while waiting (parallel stream)",
+                        session_id,
+                    )
+                    yield streamer.trace(
+                        "system",
+                        "Using cached MCP context (another connection finished gather)",
+                        phase="gather",
+                    )
+        else:
+            yield streamer.trace(
+                "system",
+                "Using cached MCP context",
+                phase="gather",
+            )
+
+        status = session.get("status")
+
+        # 4. Generate plan
+        conversation = session.get("conversation") or []
+        reconnect_question_only = (
+            status == "waiting_for_user"
+            and session.get("pending_question")
+            and conversation
+            and isinstance(conversation[-1], dict)
+            and conversation[-1].get("role") == "assistant"
+        )
+
+        plan = session.get("plan")
+        if not plan:
+            yield streamer.status("planning", "Analyzing template and creating a plan...")
+            llm = get_main_llm_client()
+            trace_buf: list[dict] = []
+            plan = await generate_plan(
+                template,
+                context,
+                session["mode"],
+                llm,
+                streamer=streamer,
+                trace_out=trace_buf,
+            )
+            for ev in trace_buf:
+                yield ev
+            _save_plan(pool, session_id, plan)
+        elif not reconnect_question_only:
+            yield streamer.trace(
+                "system",
+                "Using cached plan",
+                phase="plan",
+            )
+
+        # Avoid re-emitting plan on reconnect while waiting (reduces duplicate transcript rows).
+        if not reconnect_question_only:
+            total_steps = len(plan)
+            yield streamer.plan(
+                steps=plan,
+                total_sections=total_steps,
+                estimated_time=f"~{total_steps} minutes",
+            )
+
+        # 5. Execute plan from current_step
+        current_step = session.get("current_step", 0)
+        generated_yaml = session.get("generated_yaml", "")
+        llm = get_main_llm_client()
+
+        # Reconnect / refresh: re-emit stored question without re-running execute_step (no duplicate LLM).
+        if reconnect_question_only:
+            pq = session["pending_question"]
+            if isinstance(pq, str):
+                pq = json.loads(pq)
+            if isinstance(pq, dict):
+                yield streamer.trace(
+                    "system",
+                    "Resumed — same question (reconnect)",
+                    phase="system",
+                )
+                yield streamer.question(
+                    section=pq.get("section", ""),
+                    field=pq.get("field", ""),
+                    question_text=pq.get("question", ""),
+                    suggested_answer=pq.get("suggested_answer", ""),
+                )
+            return
+
+        _update_session_status(pool, session_id, "executing")
+
+        for i in range(current_step, total_steps):
+            step = plan[i]
+            section_key = step["section_key"]
+
+            # If we're resuming after a user answer, incorporate it
+            if status == "waiting_for_user" and i == current_step and conversation:
+                last_msg = conversation[-1] if conversation else {}
+                if last_msg.get("role") == "user":
+                    yield streamer.trace(
+                        "thinking",
+                        f"Incorporating your answer for section {section_key}",
+                        phase="incorporate",
+                    )
+                    result = await incorporate_answer(
+                        step=step,
+                        answer=last_msg["content"],
+                        partial_yaml=generated_yaml,
+                        context=context,
+                        template=template,
+                        prior_yaml=generated_yaml,
+                        llm=llm,
+                        streamer=streamer,
+                        template_type=session["template_type"],
+                    )
+                    for evt in result["events"]:
+                        yield evt
+                    if result["section_yaml"]:
+                        generated_yaml += f"\n{result['section_yaml']}"
+                    _save_step_progress(pool, session_id, i + 1, generated_yaml, conversation)
+                    yield streamer.section_complete(section_key, i + 1, total_steps)
+                    continue
+
+            # Normal execution
+            result = await execute_step(
+                step=step,
+                context=context,
+                template=template,
+                prior_yaml=generated_yaml,
+                conversation=conversation,
+                llm=llm,
+                streamer=streamer,
+                template_type=session["template_type"],
+            )
+
+            for evt in result["events"]:
+                yield evt
+
+            if result["needs_user_input"]:
+                # Pause for user input
+                q_data = result.get("question_data", {})
+                conversation.append({
+                    "role": "assistant",
+                    "content": q_data.get("question", ""),
+                })
+                partial = generated_yaml
+                if result["section_yaml"]:
+                    partial += f"\n{result['section_yaml']}"
+                _save_waiting_state(
+                    pool,
+                    session_id,
+                    i,
+                    partial,
+                    conversation,
+                    pending_question={
+                        "section": section_key,
+                        "field": q_data.get("fields", [section_key])[0]
+                        if q_data.get("fields")
+                        else section_key,
+                        "question": q_data.get("question", ""),
+                        "suggested_answer": q_data.get("suggested_answer", ""),
+                    },
+                )
+                return
+
+            if result["section_yaml"]:
+                generated_yaml += f"\n{result['section_yaml']}"
+
+            _save_step_progress(pool, session_id, i + 1, generated_yaml, conversation)
+            yield streamer.section_complete(section_key, i + 1, total_steps)
+
+        # 6. Finalize
+        yield streamer.trace(
+            "system",
+            "Finalizing: saving completed metadata and markdown",
+            phase="finalize",
+        )
+        yield streamer.status("finalizing", "Generating markdown and saving results...")
+        markdown = yaml_to_markdown(generated_yaml, session["template_type"])
+        combined_id = _save_completed(pool, session, generated_yaml, markdown)
+        _update_session_status(pool, session_id, "complete")
+        yield streamer.complete(generated_yaml, session_id, completed_id=combined_id)
+
+    except Exception as e:
+        logger.error(f"Agent loop error for session {session_id}: {e}", exc_info=True)
+        _update_session_status(pool, session_id, "failed", error=str(e))
+        yield streamer.error("agent_error", str(e))
+
+
+# ---------------------------------------------------------------------------
+# Database helpers
+# ---------------------------------------------------------------------------
+
+def _load_session(pool, session_id: str) -> dict | None:
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(f"SELECT * FROM {SCHEMA}.sessions WHERE id = %s", (session_id,))
+            return cur.fetchone()
+
+
+def _load_template(pool, template_type: str, version: int) -> str | None:
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"SELECT yaml_content FROM {SCHEMA}.templates "
+                f"WHERE type = %s AND version = %s",
+                (template_type, version),
+            )
+            row = cur.fetchone()
+            return row["yaml_content"] if row else None
+
+
+def _save_context_cache(pool, session_id: str, context: Any):
+    if not isinstance(context, dict):
+        logger.warning(
+            "context_cache skip save: expected dict, got %s",
+            type(context).__name__,
+        )
+        return
+    serializable = {}
+    for k, v in context.items():
+        try:
+            json.dumps(v)
+            serializable[k] = v
+        except (TypeError, ValueError):
+            serializable[k] = str(v)
+
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE {SCHEMA}.sessions SET context_cache = %s, updated_at = now() "
+                f"WHERE id = %s",
+                (json.dumps(serializable), session_id),
+            )
+        conn.commit()
+
+
+def _normalize_context_cache(raw: Any) -> dict:
+    """Ensure context_cache is a dict (canonical MCP shape)."""
+    if raw is None:
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("context_cache string could not be parsed as JSON")
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    return raw
+
+
+def _should_emit_session_resumed(session: dict) -> bool:
+    st = session.get("status") or ""
+    step = session.get("current_step") or 0
+    conv = session.get("conversation") or []
+    if st == "waiting_for_user":
+        return True
+    if step > 0:
+        return True
+    if st == "executing" and any(
+        isinstance(m, dict) and m.get("role") == "user" for m in conv
+    ):
+        return True
+    return False
+
+
+def _save_plan(pool, session_id: str, plan: list[dict]):
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE {SCHEMA}.sessions SET plan = %s, updated_at = now() WHERE id = %s",
+                (json.dumps(plan), session_id),
+            )
+        conn.commit()
+
+
+def _save_step_progress(pool, session_id: str, step: int, yaml_content: str, conversation: list):
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE {SCHEMA}.sessions "
+                f"SET current_step = %s, generated_yaml = %s, "
+                f"conversation = %s, status = 'executing', "
+                f"pending_question = NULL, updated_at = now() "
+                f"WHERE id = %s",
+                (step, yaml_content, json.dumps(conversation), session_id),
+            )
+        conn.commit()
+
+
+def _save_waiting_state(
+    pool,
+    session_id: str,
+    step: int,
+    yaml_content: str,
+    conversation: list,
+    pending_question: dict | None = None,
+):
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE {SCHEMA}.sessions "
+                f"SET current_step = %s, generated_yaml = %s, "
+                f"conversation = %s, status = 'waiting_for_user', "
+                f"pending_question = %s, updated_at = now() "
+                f"WHERE id = %s",
+                (
+                    step,
+                    yaml_content,
+                    json.dumps(conversation),
+                    json.dumps(pending_question) if pending_question else None,
+                    session_id,
+                ),
+            )
+        conn.commit()
+
+
+def _update_session_status(pool, session_id: str, status: str, error: str | None = None):
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            if status == "complete":
+                cur.execute(
+                    f"UPDATE {SCHEMA}.sessions "
+                    f"SET status = %s, completed_at = now(), "
+                    f"pending_question = NULL, updated_at = now() WHERE id = %s",
+                    (status, session_id),
+                )
+            elif error:
+                cur.execute(
+                    f"UPDATE {SCHEMA}.sessions "
+                    f"SET status = %s, error_message = %s, "
+                    f"pending_question = NULL, updated_at = now() WHERE id = %s",
+                    (status, error, session_id),
+                )
+            else:
+                cur.execute(
+                    f"UPDATE {SCHEMA}.sessions SET status = %s, updated_at = now() WHERE id = %s",
+                    (status, session_id),
+                )
+        conn.commit()
+
+
+def _save_completed(pool, session: dict, yaml_content: str, markdown: str) -> str:
+    """Save completed metadata. Returns the primary completed row's id.
+
+    For multi-table sessions: saves one combined row (table_fqn=NULL) plus
+    per-table rows. For single-table: one row with table_fqn set.
+    """
+    table_ref = session.get("table_ref", {})
+    tables: list[dict] = []
+    if table_ref.get("tables"):
+        tables = table_ref["tables"]
+    elif table_ref.get("table"):
+        tables = [{
+            "catalog": table_ref.get("catalog", ""),
+            "schema": table_ref.get("schema", ""),
+            "table": table_ref["table"],
+        }]
+
+    multi = len(tables) > 1
+
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            if multi:
+                # Combined row
+                cur.execute(
+                    f"INSERT INTO {SCHEMA}.completed_metadata "
+                    f"(session_id, user_email, template_type, table_ref, "
+                    f" yaml_content, markdown_content, table_fqn) "
+                    f"VALUES (%s, %s, %s, %s, %s, %s, NULL) RETURNING id",
+                    (
+                        str(session["id"]),
+                        session["user_email"],
+                        session["template_type"],
+                        json.dumps(table_ref),
+                        yaml_content,
+                        markdown,
+                    ),
+                )
+                combined_id = str(cur.fetchone()["id"])
+
+                # Per-table rows (best-effort split; fall back to full YAML per table)
+                per_table_yamls = _split_yaml_per_table(yaml_content, tables)
+                for tbl in tables:
+                    fqn = f"{tbl.get('catalog', '')}.{tbl.get('schema', '')}.{tbl.get('table', '')}"
+                    tbl_yaml = per_table_yamls.get(fqn, yaml_content)
+                    tbl_md = yaml_to_markdown(tbl_yaml, session["template_type"])
+                    cur.execute(
+                        f"INSERT INTO {SCHEMA}.completed_metadata "
+                        f"(session_id, user_email, template_type, table_ref, "
+                        f" yaml_content, markdown_content, table_fqn) "
+                        f"VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (
+                            str(session["id"]),
+                            session["user_email"],
+                            session["template_type"],
+                            json.dumps(table_ref),
+                            tbl_yaml,
+                            tbl_md,
+                            fqn,
+                        ),
+                    )
+            else:
+                # Single table
+                fqn = None
+                if tables:
+                    t = tables[0]
+                    fqn = f"{t.get('catalog', '')}.{t.get('schema', '')}.{t.get('table', '')}"
+                cur.execute(
+                    f"INSERT INTO {SCHEMA}.completed_metadata "
+                    f"(session_id, user_email, template_type, table_ref, "
+                    f" yaml_content, markdown_content, table_fqn) "
+                    f"VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (
+                        str(session["id"]),
+                        session["user_email"],
+                        session["template_type"],
+                        json.dumps(table_ref),
+                        yaml_content,
+                        markdown,
+                        fqn,
+                    ),
+                )
+                combined_id = str(cur.fetchone()["id"])
+        conn.commit()
+    return combined_id
+
+
+def _split_yaml_per_table(yaml_content: str, tables: list[dict]) -> dict[str, str]:
+    """Best-effort split of combined YAML into per-table chunks.
+
+    Returns {fqn: yaml_str}. Falls back to full content if parsing
+    fails or the structure isn't partitioned by top-level keys.
+    """
+    try:
+        data = yaml.safe_load(yaml_content)
+        if not isinstance(data, dict):
+            return {}
+    except yaml.YAMLError:
+        return {}
+
+    fqns = set()
+    for t in tables:
+        fqns.add(f"{t.get('catalog', '')}.{t.get('schema', '')}.{t.get('table', '')}")
+
+    # If top-level keys match table FQNs, split directly
+    if fqns.issubset(set(data.keys())):
+        result = {}
+        for fqn in fqns:
+            # Inner document only — matches table_comment template top-level keys
+            # (not { fqn: { ... } }, which breaks yaml_to_markdown).
+            result[fqn] = yaml.dump(data[fqn], default_flow_style=False)
+        return result
+
+    return {}
+
+
+def _find_completed_id(pool, session_id: str, user_email: str) -> str | None:
+    """Look up the primary completed_metadata row for a session (combined or single)."""
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"SELECT id FROM {SCHEMA}.completed_metadata "
+                f"WHERE session_id = %s AND user_email = %s "
+                f"ORDER BY table_fqn NULLS FIRST LIMIT 1",
+                (session_id, user_email),
+            )
+            row = cur.fetchone()
+    return str(row["id"]) if row else None
+
+
+# ---------------------------------------------------------------------------
+# MCP context gathering
+# ---------------------------------------------------------------------------
+
+def _build_tool_args(tool: dict, catalog: str, schema: str, table: str) -> dict | None:
+    """Build arguments for a tool based on its inputSchema.
+
+    Inspects the tool's parameter names to determine the calling convention.
+    Returns None for tools that don't take table parameters (e.g. list_jobs).
+    """
+    props = tool.get("inputSchema", {}).get("properties", {})
+    param_names = set(props.keys())
+    fqn = f"{catalog}.{schema}.{table}"
+
+    if "table_fqn" in param_names:
+        return {"table_fqn": fqn}
+    if "table_full_name" in param_names:
+        return {"table_full_name": fqn}
+    if "p_catalog" in param_names:
+        return {"p_catalog": catalog, "p_schema": schema, "p_table": table}
+    if "catalog_name" in param_names:
+        return {"catalog_name": catalog, "schema_name": schema, "table_name": table}
+    return None
+
+
+async def _iter_gather_context_events(
+    session: dict,
+    streamer: EventStreamer,
+    out: dict[str, Any],
+) -> AsyncGenerator[dict, None]:
+    """Run MCP gather; yield trace SSE dicts; set out['context'] to the result dict."""
+    config = get_config()
+    registry = MCPRegistry([
+        {"name": s.name, "type": s.type, "app_name": s.app_name,
+         "uc_catalog": s.uc_catalog, "uc_schema": s.uc_schema, "url": s.url}
+        for s in config.mcp_servers
+    ])
+
+    yield streamer.trace(
+        "system",
+        "Connecting to MCP servers…",
+        phase="gather",
+    )
+    try:
+        await asyncio.to_thread(registry.connect_all)
+    except Exception as e:
+        logger.warning(f"MCP registry connect failed: {e}")
+        out["context"] = {}
+        yield streamer.trace(
+            "system",
+            f"MCP connect failed: {e}",
+            phase="gather",
+        )
+        return
+
+    context: dict[str, Any] = {}
+    table_ref = session.get("table_ref", {})
+
+    tables: list[dict] = []
+    if table_ref.get("tables"):
+        tables = table_ref["tables"]
+    elif table_ref.get("table"):
+        tables = [{
+            "catalog": table_ref.get("catalog", ""),
+            "schema": table_ref.get("schema", ""),
+            "table": table_ref["table"],
+        }]
+
+    all_tools = registry.get_available_tools()
+    overrides = config.mcp_tool_overrides
+    context["_mcp_tool_manifest"] = build_tool_manifest(all_tools, overrides)
+    gather_tools = tools_for_auto_gather(all_tools, overrides)
+    multi_table = len(tables) > 1
+
+    if not all_tools:
+        yield streamer.trace(
+            "system",
+            "No MCP tools discovered from servers — proceeding with template only",
+            phase="gather",
+        )
+
+    for tbl in tables:
+        cat = tbl.get("catalog", "")
+        sch = tbl.get("schema", "")
+        tname = tbl.get("table", "")
+        tbl_key = f"{cat}.{sch}.{tname}"
+        tbl_context: dict[str, Any] = {}
+
+        for tool in gather_tools:
+            tool_name = tool["name"]
+            args = _build_tool_args(tool, cat, sch, tname)
+            if args is None:
+                continue
+            tfqn = tbl_key if multi_table else None
+            yield streamer.trace(
+                "tool",
+                f"Calling {tool_name}",
+                tool=tool_name,
+                phase="gather",
+                table_fqn=tfqn,
+            )
+            try:
+                result = await asyncio.to_thread(
+                    registry.call_tool, tool_name, args
+                )
+                tbl_context[tool_name] = result
+                preview = str(result) if result is not None else ""
+                yield streamer.trace(
+                    "tool",
+                    f"{tool_name} returned",
+                    tool=tool_name,
+                    detail=preview,
+                    phase="gather",
+                    table_fqn=tfqn,
+                )
+            except Exception as e:
+                logger.warning(f"MCP tool {tool_name} failed for {tbl_key}: {e}")
+                yield streamer.trace(
+                    "system",
+                    f"Tool {tool_name} failed: {e}",
+                    tool=tool_name,
+                    phase="gather",
+                    table_fqn=tfqn,
+                )
+
+        context[tbl_key] = tbl_context
+
+    out["context"] = context
+    yield streamer.trace(
+        "system",
+        "MCP context gather complete",
+        phase="gather",
+    )

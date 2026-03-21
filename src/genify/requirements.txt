@@ -1,0 +1,28 @@
+# Pinned versions speed up `pip install` on Databricks Apps (avoids long backtracking).
+# If you loosen pins, see https://pip.pypa.io/warnings/backtracking
+
+fastapi==0.115.6
+uvicorn==0.34.0
+aiofiles==23.2.1
+psycopg[binary,pool]==3.3.3
+httpx==0.28.1
+sse-starlette==2.2.1
+# mcp>=1.13 requires pydantic>=2.11; keep <3 for FastAPI 0.115.x
+pydantic==2.11.7
+pydantic-core==2.33.2
+databricks-sdk==0.102.0
+# databricks-sql-connector requires numpy<2 — pin early to avoid resolver trying numpy 2.x
+numpy==1.26.4
+databricks-sql-connector==3.4.0
+pyyaml==6.0.3
+python-dotenv==1.2.2
+requests==2.32.5
+# databricks-ai-bridge requires tiktoken>=0.8 (was 0.5.2 — caused resolver churn with MCP stack)
+tiktoken==0.11.0
+
+# MCP stack — pin databricks-mcp and heavy transitive deps so the resolver does not backtrack
+databricks-mcp==0.9.0
+mcp==1.13.1
+databricks-ai-bridge==0.15.0
+mlflow==3.10.1
+pandas==2.2.3

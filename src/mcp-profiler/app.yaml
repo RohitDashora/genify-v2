@@ -1,0 +1,12 @@
+# Databricks App config for table-profiling MCP server.
+# MCP endpoint: https://<app-url>/mcp
+# See: https://docs.databricks.com/aws/en/generative-ai/mcp/custom-mcp
+
+command:
+  - "uv"
+  - "run"
+  - "mcp-server"
+
+env:
+  - name: WAREHOUSE_ID
+    valueFrom: sql_warehouse

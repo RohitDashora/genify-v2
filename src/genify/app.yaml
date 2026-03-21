@@ -1,0 +1,51 @@
+name: genify-v2
+display_name: Genify
+description: Demo/reference AI metadata generator (Unity Catalog & Genie-style templates) — not for production
+
+command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+env:
+  - name: LLM_ENDPOINT_NAME
+    valueFrom: interview-endpoint
+  - name: SUMMARIZER_ENDPOINT_NAME
+    valueFrom: summarizer-endpoint
+  - name: WAREHOUSE_ID
+    valueFrom: sql-warehouse
+
+config:
+  llm:
+    endpoint_name: "databricks-gpt-5-2"
+    max_tokens: 40000 #max output tokens for the LLM
+    temperature: 0.7 #temperature for the LLM
+    max_prompt_tokens: 20000 #max input tokens for the LLM prompt (trim_history budget per call)
+
+  lakebase:
+    enabled: true
+    schema: "genify"
+    pool_size: 5
+
+  # Character caps for MCP/context text in LLM prompts (0 = no limit for tail/truncate where supported).
+  context_truncation:
+    planning_chars_per_key: 7000 # planner: each MCP context key in the planning prompt
+    executor_section_chars_per_key: 7000 # execute: each key in section context blob
+    prior_yaml_tail_chars: 7000 # section generation / incorporate: tail of prior YAML
+    interactive_known_data_chars: 7000 # interactive question prompt: known_data prefix
+
+  mcp_servers:
+    - name: "profiler"
+      type: "databricks_app"
+      app_name: "genify-mcp-profiler"
+
+    - name: "uc-functions"
+      type: "uc_managed"
+      uc_catalog: "agent_spark"
+      uc_schema: "custom_agent"
+
+  # Optional: planner hints, hide tools from manifest + auto-gather, or add planner-only tool rows.
+  mcp_tool_overrides:
+    hidden_tools:
+      - agent_spark__custom_agent__get_forward_lineage
+      - agent_spark__custom_agent__get_backward_lineage
+      - agent_spark__custom_agent__get_table_profile
+      # UC PROCEDURE — MCP/Spark often returns UNRESOLVED_ROUTINE; hide until exposed as invokable tool
+      - agent_spark__custom_agent__analyze_table

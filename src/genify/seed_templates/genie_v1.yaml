@@ -1,0 +1,82 @@
+_meta:
+  type: genie
+  name: "Genie Space Template"
+  version: 1
+  notes: "Standard 5-section Genie space metadata template"
+
+sections:
+  - key: sql_expressions
+    name: "SQL Expressions"
+    optional: false
+    prompt_focus: "Reusable metrics, filters, time dimensions as SQL"
+    fields: [sql_expressions]
+
+  - key: query_instructions
+    name: "Query Instructions"
+    optional: false
+    prompt_focus: "Scenario-based instructions for how Genie should handle queries"
+    fields: [query_instructions]
+
+  - key: example_queries
+    name: "Example Queries"
+    optional: false
+    prompt_focus: "Natural language to SQL examples for Genie to learn from"
+    fields: [example_queries]
+
+  - key: clarification_rules
+    name: "Clarification Rules"
+    optional: true
+    prompt_focus: "When Genie should ask for more information"
+    fields: [clarification_rules]
+
+  - key: space_context
+    name: "Space Context"
+    optional: true
+    prompt_focus: "Focus areas, excluded scope, defaults, column visibility"
+    fields: [space_context, column_visibility, space_metadata]
+
+template:
+  space_identity:
+    space_name: ""
+    purpose: ""
+    audience: []
+  tables: []
+
+  sql_expressions:
+    - name: ""
+      sql: ""
+      description: ""
+      category: "metric"
+
+  query_instructions:
+    - scenario: ""
+      instruction: ""
+      applies_to: []
+
+  example_queries:
+    - prompt: ""
+      description: ""
+      sql: ""
+      category: ""
+
+  clarification_rules:
+    - trigger_condition: ""
+      missing_details: []
+      clarification_question: ""
+      example_prompts: []
+
+  space_context:
+    focus_areas: []
+    excluded_from_scope: []
+    default_filters: []
+    common_user_questions: []
+
+  column_visibility:
+    always_show: []
+    hide_from_space: []
+
+  space_metadata:
+    created_date: ""
+    last_updated: ""
+    space_owner: ""
+    version_notes: []

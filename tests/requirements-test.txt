@@ -1,0 +1,5 @@
+# Test environment: Genify backend (tests import from src/genify) + test runner.
+# Install from repo root:  pip install -r tests/requirements-test.txt
+-r ../src/genify/requirements.txt
+
+pytest==8.3.5

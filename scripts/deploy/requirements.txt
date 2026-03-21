@@ -1,0 +1,3 @@
+# Used by ./deploy.sh preflight + Genify resource update (Lakebase postgres via SDK).
+PyYAML>=6.0
+databricks-sdk>=0.30

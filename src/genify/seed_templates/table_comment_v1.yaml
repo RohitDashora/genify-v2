@@ -1,0 +1,113 @@
+_meta:
+  type: table_comment
+  name: "Table Comment Template"
+  version: 1
+  notes: "Standard 4-section table comment template"
+
+sections:
+  - key: core_description
+    name: "Core Description"
+    optional: false
+    prompt_focus: "Table description, purpose, granularity, domain, data scope"
+    fields: [description, business_purpose, granularity, business_domain, data_scope]
+
+  - key: relationships
+    name: "Relationships & Concepts"
+    optional: true
+    prompt_focus: "Business concepts, related tables, join keys"
+    fields: [business_concepts, relationships]
+
+  - key: data_quality
+    name: "Quality & Rules"
+    optional: true
+    prompt_focus: "Completeness, known issues, business rules, default query logic"
+    fields: [data_quality, business_rules, default_logic]
+
+  - key: metadata
+    name: "Metadata & History"
+    optional: true
+    prompt_focus: "Primary key, compliance, ownership, change history, tags"
+    fields: [metadata, change_history, tags]
+
+template:
+  table_identity:
+    catalog: ""
+    schema: ""
+    name: ""
+    business_name: ""
+
+  core_description:
+    description: |
+      Clear, concise description of what this table contains.
+      Focus on WHAT the table is, not HOW to query it.
+    business_purpose: |
+      Why this table exists and who uses it.
+    granularity: |
+      What ONE ROW represents — critical for any aggregation logic.
+    business_domain: ""
+    data_scope:
+      date_range:
+        start_date: "YYYY-MM-DD"
+        current: ""
+        notes: ""
+      completeness: ""
+      refresh_frequency: ""
+      coverage: ""
+
+  relationships:
+    business_concepts:
+      concept_name:
+        definition: ""
+        rationale: ""
+        calculation: ""
+        filter_note: ""
+    relationships:
+      - table: ""
+        type: ""
+        join_key: ""
+        description: ""
+        provides: ""
+
+  data_quality:
+    data_quality:
+      completeness:
+        overall: ""
+        notes: []
+      accuracy:
+        notes: []
+      known_issues:
+        - issue: ""
+          description: ""
+          workaround: ""
+          reason: ""
+      limitations: []
+    business_rules:
+      - rule: ""
+        logic: ""
+        rationale: ""
+    default_logic:
+      - scenario: ""
+        instruction: ""
+
+  metadata:
+    metadata:
+      primary_key: ""
+      partition_strategy: ""
+      compliance:
+        contains_pii: false
+        data_classification: ""
+        regulatory: ""
+        retention_policy: ""
+      ownership:
+        data_owner: ""
+        technical_owner: ""
+        domain_experts: []
+      sla:
+        freshness: ""
+        availability: ""
+        support: ""
+    change_history:
+      - date: "YYYY-MM-DD"
+        change: ""
+        impact: ""
+    tags: []

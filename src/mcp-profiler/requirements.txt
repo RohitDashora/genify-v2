@@ -1,0 +1,3 @@
+uv
+mcp>=1.0
+databricks-sdk>=0.40

@@ -1,0 +1,29 @@
+# Copy to deploy.config.yaml and fill in. Profile is passed on the command line:
+#   ./deploy.sh --profile fe-vm-v2 --config deploy.config.yaml
+#
+# version: 1
+
+# REQUIRED: SQL warehouse ID — used for UC function deployment AND both apps' sql_warehouse binding.
+warehouse_id: "<paste-warehouse-id>"
+
+# Databricks Apps (names are created by deploy if missing)
+genify_app: "genify-v2"
+profiler_app: "genify-mcp-profiler"
+
+# Genify Lakebase — use ONE of the following (see docs/deploy.md):
+
+# (A) Lakebase Provisioned — instance + database name (as in Compute → Apps → app → resources / apps get)
+lakebase_instance_name: "<database-instance-name>"
+lakebase_database_name: "<database-name>"
+
+# (B) Lakebase Autoscaling — full branch + database resource paths
+# postgres_branch: "projects/<project>/branches/<branch-id>"
+# postgres_database: "projects/<project>/branches/<branch-id>/databases/<db-name>"
+
+# LLM serving endpoints (must exist in workspace)
+llm_endpoint: "databricks-gpt-5-2"
+summarizer_endpoint: "databricks-gemini-2-5-flash"
+
+# Unity Catalog (UC function SQL uses {{CATALOG}} / {{SCHEMA}})
+uc_catalog: "agent_spark"
+uc_schema: "custom_agent"
