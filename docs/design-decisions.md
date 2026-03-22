@@ -4,6 +4,31 @@ Short rationale for major choices in this reference repo. For full diagrams see 
 
 **Note:** Numbers are **stable IDs**, not document order—sections are grouped by theme (e.g. **ADR-8** appears after session-interaction ADRs because it documents `context_cache` shape).
 
+| ID | Title |
+|----|--------|
+| ADR-1 | Lakebase for session and template state |
+| ADR-2 | SSE for agent progress |
+| ADR-3 | MCP for data plane access |
+| ADR-3b | MCP gather fail-open (no retries) |
+| ADR-4 | Imperative `deploy.sh` pipeline |
+| ADR-5 | Canonical YAML merge for sections |
+| ADR-6 | Distinct resource keys for Genify vs profiler |
+| ADR-7 | Milestone timeline vs activity trace (SSE) |
+| ADR-8 | Canonical MCP context dict in sessions |
+| ADR-9 | Transcript-first session UI |
+| ADR-10 | Interactive resume — answer queue and `pending_question` |
+| ADR-11 | Interactive pause — composer draft and SSE lifecycle |
+| ADR-12 | SDK PATCH for Genify app resources |
+| ADR-13 | Engineer-facing documentation and screenshot inventory |
+| ADR-14 | Execution uses cached MCP context only (plan `data_sources` is advisory) |
+| ADR-15 | User identity from Databricks Apps proxy headers |
+| ADR-16 | MCP gather serialized per session (in-process) |
+| ADR-17 | `mcp_tool_overrides` in `app.yaml` |
+| ADR-18 | Multi-table `completed_metadata` rows |
+| ADR-19 | Configurable context truncation and optional `generated_json` |
+| ADR-20 | Retry last section (`POST /api/sessions/{id}/retry-section`) |
+| ADR-21 | Permissive CORS for the demo SPA |
+
 ---
 
 ## ADR-1: Lakebase for session and template state
@@ -203,6 +228,8 @@ Short rationale for major choices in this reference repo. For full diagrams see 
 **Rationale:** Bounded prompts even when MCP returns large payloads; optional JSON avoids a second YAML parse downstream.
 
 **Tradeoff:** Character limits can truncate nuance; **`generated_json`** doubles storage when enabled.
+
+**Operational detail:** [llm-and-tokens.md](llm-and-tokens.md).
 
 ---
 

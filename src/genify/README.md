@@ -33,7 +33,7 @@ For MCP and LLM calls to succeed, your shell must authenticate to the workspace 
 
 ## Architecture
 
-See **[../../docs/architecture.md](../../docs/architecture.md)** and **[../../docs/mcp-and-agents.md](../../docs/mcp-and-agents.md)**.
+See **[../../docs/architecture.md](../../docs/architecture.md)**, **[../../docs/mcp-and-agents.md](../../docs/mcp-and-agents.md)**, and **[../../docs/agentic-loop.md](../../docs/agentic-loop.md)** (server-side gather → plan → execute).
 
 The **session page** loads **`GET /api/sessions/{id}`** (TanStack Query: loading/error/retry), **hydrates** the transcript from `conversation`, then opens **SSE** (`GET /api/sessions/{id}/stream`) via [`frontend/src/api.js`](frontend/src/api.js) `connectSSE` (optional **`onOpen`**). User-visible flow is a **conversation** plus a collapsible **activity trace** for `trace` events. See [client lifecycle](../../docs/architecture.md#client-lifecycle-browser) and [SSE event types](../../docs/architecture.md#sse-event-types-session-stream).
 

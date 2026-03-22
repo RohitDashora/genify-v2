@@ -154,7 +154,7 @@ Details: [deploy.md](deploy.md).
 
 ## 5. Agent session sequence (simplified)
 
-**Dedicated doc:** For the full **gather → plan → execute** narrative, cache rules, planner vs executor invariants, and a contributor code map in one place, see **[agentic-loop.md](agentic-loop.md)**. The subsections below keep the **sequence diagrams**, **hands-off vs interactive** detail, **client lifecycle**, **SSE event table**, and **UI mapping** alongside the rest of this architecture page.
+**Dedicated doc:** **[agentic-loop.md](agentic-loop.md)** explains the loop as an **architecture and design** pattern, then the **gather → plan → execute** implementation (cache rules, planner vs executor invariants, contributor code map). The subsections below keep the **sequence diagrams**, **hands-off vs interactive** detail, **client lifecycle**, **SSE event table**, and **UI mapping** alongside the rest of this architecture page.
 
 From [`backend/agent/core.py`](../src/genify/backend/agent/core.py) `run_agent`:
 

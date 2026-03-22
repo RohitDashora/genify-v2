@@ -1,8 +1,44 @@
 # Genify agentic loop
 
-This document describes the **gather → plan → execute** orchestration in Genify: how `run_agent` drives MCP context gathering, LLM planning, per-section execution, optional interactive pauses, and finalization. It complements **[architecture.md](architecture.md)** (system context, MCP topology, UI, full SSE table) and **[mcp-and-agents.md](mcp-and-agents.md)** (MCP wiring, gather policy, multi-worker).
+This document has two layers: **what** the agentic loop is as an architecture and design pattern, and **how** Genify implements it in code (`run_agent`, MCP gather, LLM plan/execute, SSE). It complements **[architecture.md](architecture.md)** (system context, MCP topology, UI, full SSE table) and **[mcp-and-agents.md](mcp-and-agents.md)** (MCP wiring, gather policy, multi-worker).
 
-**Scope:** server-side agent behavior in [`src/genify/backend/agent/core.py`](../src/genify/backend/agent/core.py). The browser contract (EventSource, `question` / `POST /answer`) is summarized here; see [architecture.md §5 — Client lifecycle](architecture.md#5-agent-session-sequence-simplified) for full session UX detail.
+---
+
+## The agentic loop: architecture and design
+
+### What “agentic” means
+
+In general, an **agentic loop** is a **closed control cycle**: the system **observes** state (goal, template, prior outputs, tool results), **decides** what to do next (a plan or the next action), **acts** (invoke tools, call the LLM, emit artifacts or questions), and **persists** progress until a terminal condition—**complete**, **failed**, or an intentional **pause** for human input. It is not a single chat completion: it is **multiple** LLM steps and, in Genify, **structured tool use** against governed data sources.
+
+### Genify’s place in the stack
+
+Architecturally, the loop is the **third pillar** in [architecture.md — §0 Three pillars](architecture.md#0-three-architectural-pillars): the **Genify app** ties together a **React** UI, **FastAPI** routes, **MCP** for the **data plane** (managed UC tools + optional custom MCP apps), **Foundation Model** endpoints for **planning and generation**, **Lakebase** for **durable session and template state**, and **SSE** so the browser can follow long-running work without blocking on a single HTTP response.
+
+At a high level the pattern is **gather → plan → execute**:
+
+| Stage | Role |
+|-------|------|
+| **Gather** | Populate **observations** from MCP tools (profiler, UC functions) into a **session-scoped cache** so downstream prompts stay grounded in workspace metadata. |
+| **Plan** | Ask the LLM for a **structured plan** (ordered steps aligned to template sections), informed by that cache and the tool manifest—not a free-form script. |
+| **Execute** | For each step, the LLM **fills** YAML under a known **section key**; outputs are **merged** into one document, with optional **interactive** pauses. |
+
+### Design properties (why it looks like this)
+
+- **Separation of data plane and “reasoning”:** MCP **gather** is the only routine path that **calls tools**; **execution** reads **cached** context ([ADR-14](design-decisions.md#adr-14-execution-uses-cached-mcp-context-only-plan-data_sources-is-advisory)). That keeps tool I/O predictable and avoids re-fetching UC/profiler data on every section.
+- **Governed tools:** Tools are not arbitrary HTTP; they go through **MCP** and Unity Catalog where applicable ([ADR-3](design-decisions.md#adr-3-mcp-for-data-plane-access)).
+- **Fail-open gather:** A bad or missing tool result is **stored** and the run **continues** with partial context ([ADR-3b](design-decisions.md#adr-3b-mcp-gather-fail-open-no-retries)).
+- **Durable, resumable state:** Session rows in Lakebase hold **plan**, **context cache**, **merged YAML**, and **conversation** so reconnects and **interactive** resumes are first-class ([ADR-10](design-decisions.md#adr-10-interactive-resume--answer-queue-and-pending_question), [ADR-11](design-decisions.md#adr-11-interactive-pause--composer-draft-and-sse-lifecycle)).
+- **Progress channel vs LLM metering:** **SSE** streams **status**, **trace**, **yaml**, and **questions** to the client ([ADR-2](design-decisions.md#adr-2-sse-for-agent-progress)); it is **not** a substitute for **token** or **cost** accounting—see **[llm-and-tokens.md](llm-and-tokens.md)**.
+
+---
+
+## Scope (this document vs architecture)
+
+**Scope here:** server-side orchestration in [`src/genify/backend/agent/core.py`](../src/genify/backend/agent/core.py)—phases, cache rules, planner vs executor boundaries, and contributor invariants.
+
+**Session UX** (EventSource lifecycle, `question` / `POST /answer`, transcript vs trace): [architecture.md §5 — Client lifecycle](architecture.md#5-agent-session-sequence-simplified) and [ui-design.md](ui-design.md).
+
+**Below:** concrete **implementation**—entry point, ordered phases, sequences, and flowcharts.
 
 ---
 
@@ -180,7 +216,7 @@ Invalid plan JSON falls back via **`_fallback_plan`** in `planner.py` (hands-off
 | [architecture.md](architecture.md) | System diagram, MCP URLs, **full SSE event table**, client lifecycle, Lakebase session fields |
 | [mcp-and-agents.md](mcp-and-agents.md) | Managed vs custom MCP, concurrent SSE, troubleshooting |
 | [mcp-servers-and-tools.md](mcp-servers-and-tools.md) | Tool inventory, `hidden_tools` |
-| [llm-and-tokens.md](llm-and-tokens.md) | `context_truncation`, summarizer |
+| [llm-and-tokens.md](llm-and-tokens.md) | `context_truncation`, cost heuristics, **summarizer not used by default agent** |
 | [extending.md](extending.md) | Changing prompts, SSE, templates |
 | [design-decisions.md](design-decisions.md) | ADRs (e.g. SSE, `pending_question`, transcript) |
 

@@ -119,11 +119,11 @@ Details: **[docs/deploy.md](docs/deploy.md)**.
 |-----|--------|
 | [docs/product-overview.md](docs/product-overview.md) | Product story, BYO templates, Genie/table metadata |
 | [docs/architecture.md](docs/architecture.md) | Three pillars, system diagrams, hands-off vs interactive, SSE, Library |
-| [docs/agentic-loop.md](docs/agentic-loop.md) | `run_agent` gather → plan → execute, invariants, code map |
+| [docs/agentic-loop.md](docs/agentic-loop.md) | Agentic loop (architecture & design), then `run_agent` implementation: phases, cache rules, invariants, code map |
 | [docs/ui-design.md](docs/ui-design.md) | Transcript-first UI, shell, Library, session screenshots |
 | [docs/mcp-servers-and-tools.md](docs/mcp-servers-and-tools.md) | Each MCP server + tool; BYO MCP; `hidden_tools` |
 | [docs/mcp-and-agents.md](docs/mcp-and-agents.md) | Managed vs custom MCP, deps, troubleshooting |
-| [docs/llm-and-tokens.md](docs/llm-and-tokens.md) | Token budgets, `context_truncation`, streaming vs LLM |
+| [docs/llm-and-tokens.md](docs/llm-and-tokens.md) | Token budgets, `context_truncation`, cost heuristics, SSE vs LLM |
 | [docs/deploy.md](docs/deploy.md) | End-to-end deploy |
 | [docs/security-auth.md](docs/security-auth.md) | SP, bindings, secrets |
 | [docs/extending.md](docs/extending.md) | Add servers, UC SQL, fork |

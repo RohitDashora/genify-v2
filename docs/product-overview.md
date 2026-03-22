@@ -74,6 +74,6 @@ Assets live under [`images/`](images/). Full inventory: **[images/README.md](ima
 | Doc | Focus |
 |-----|--------|
 | [architecture.md](architecture.md) | System context, MCP topology, deploy, SSE, Lakebase |
-| [agentic-loop.md](agentic-loop.md) | `run_agent`, gather/plan/execute, cache rules |
+| [agentic-loop.md](agentic-loop.md) | Loop concept + `run_agent` gather/plan/execute, cache rules |
 | [ui-design.md](ui-design.md) | Transcript-first UI, shell, screenshots |
 | [deploy.md](deploy.md) | `deploy.sh`, `deploy.config.yaml` |
