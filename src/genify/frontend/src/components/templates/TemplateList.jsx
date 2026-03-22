@@ -1,24 +1,37 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
-import { ArrowUpDown, BookMarked, Clock, Inbox, Search } from 'lucide-react'
+import {
+  ArrowUpDown,
+  Clock,
+  Hash,
+  Inbox,
+  LayoutTemplate,
+  Plus,
+  Search,
+  Star,
+} from 'lucide-react'
 import { formatRelative } from 'date-fns'
 import { fetchJSON } from '../../api'
-import { formatCompletedLabel } from '../../utils/tableRef'
 import HelpHint from '../HelpHint'
-import MetadataBadges from './MetadataBadges'
-import { FILTER_CHIP_BASE, FILTER_CHIP_IDLE, FILTER_CHIP_SELECTED, TYPE_LABELS } from './metadataLabels'
+import {
+  FILTER_CHIP_BASE,
+  FILTER_CHIP_IDLE,
+  FILTER_CHIP_SELECTED,
+  TYPE_LABELS,
+  templateLabel,
+} from '../library/metadataLabels'
 
 const SORT_OPTIONS = [
+  { value: 'version', label: 'Version' },
   { value: 'updated', label: 'Updated' },
   { value: 'name', label: 'Name' },
-  { value: 'created', label: 'Created' },
 ]
 
 function ListSkeleton() {
   const pulse = 'animate-pulse rounded-lg bg-gray-200/80'
   return (
-    <div className="space-y-2" aria-busy="true" aria-label="Loading saved metadata">
+    <div className="space-y-2" aria-busy="true" aria-label="Loading templates">
       {[1, 2, 3, 4].map((k) => (
         <div key={k} className="rounded-xl border border-border-subtle bg-surface p-2.5 shadow-card space-y-2">
           <div className={`${pulse} h-4 w-[85%]`} />
@@ -29,43 +42,55 @@ function ListSkeleton() {
   )
 }
 
-export default function LibraryList({ selectedId }) {
+export default function TemplateList({ selectedId }) {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [filterTemplate, setFilterTemplate] = useState('all')
-  const [sortMode, setSortMode] = useState('updated')
+  const [sortMode, setSortMode] = useState('version')
 
   const { data: items, isLoading, isError, error } = useQuery({
-    queryKey: ['completed'],
-    queryFn: () => fetchJSON('/completed'),
+    queryKey: ['templates'],
+    queryFn: () => fetchJSON('/templates'),
   })
 
-  const templateKeys = useMemo(() => Object.keys(TYPE_LABELS), [])
+  const typeKeys = useMemo(() => {
+    const fromApi = new Set()
+    items?.forEach((row) => fromApi.add(row.type))
+    Object.keys(TYPE_LABELS).forEach((k) => fromApi.add(k))
+    return Array.from(fromApi).sort()
+  }, [items])
 
   const filteredSorted = useMemo(() => {
     if (!items?.length) return []
     const q = search.trim().toLowerCase()
-    let list = items.map((item) => {
-      const { label, isCombined } = formatCompletedLabel(item.table_fqn, item.table_ref)
-      return { ...item, _label: label, _isCombined: isCombined }
-    })
+    let list = [...items]
     if (filterTemplate !== 'all') {
-      list = list.filter((item) => item.template_type === filterTemplate)
+      list = list.filter((item) => item.type === filterTemplate)
     }
     if (q) {
       list = list.filter((item) => {
-        const fqn = item.table_fqn ? String(item.table_fqn).toLowerCase() : ''
-        return item._label.toLowerCase().includes(q) || fqn.includes(q)
+        const hay = [
+          item.name,
+          item.type,
+          item.notes,
+          String(item.version),
+          templateLabel(item.type),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        return hay.includes(q)
       })
     }
     const sorted = [...list].sort((a, b) => {
+      if (sortMode === 'version') {
+        if (a.type !== b.type) return a.type.localeCompare(b.type)
+        return b.version - a.version
+      }
       if (sortMode === 'updated') {
         return new Date(b.updated_at) - new Date(a.updated_at)
       }
-      if (sortMode === 'created') {
-        return new Date(b.created_at) - new Date(a.created_at)
-      }
-      return a._label.localeCompare(b._label)
+      return (a.name || '').localeCompare(b.name || '')
     })
     return sorted
   }, [items, search, filterTemplate, sortMode])
@@ -73,28 +98,37 @@ export default function LibraryList({ selectedId }) {
   return (
     <div className="flex flex-col flex-1 min-h-0 h-full max-h-full">
       <div className="shrink-0 space-y-2 pb-2 border-b border-border-subtle">
-        <div className="flex items-center gap-2">
-          <BookMarked className="w-5 h-5 text-brand-500 shrink-0" aria-hidden />
-          <h2 className="text-base font-semibold text-gray-900">Saved metadata</h2>
-          <HelpHint label="About: Saved metadata">
-            Completed YAML outputs from your sessions. Click a card to view, edit, or copy.
+        <div className="flex items-center gap-2 flex-wrap">
+          <LayoutTemplate className="w-5 h-5 text-brand-500 shrink-0" aria-hidden />
+          <h2 className="text-base font-semibold text-gray-900">Templates</h2>
+          <HelpHint label="About: Templates">
+            Versions live in Lakebase. New sessions use the <strong>default</strong> version for each
+            template type.
           </HelpHint>
+          <button
+            type="button"
+            onClick={() => navigate('/templates/new')}
+            className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-brand-500 text-white hover:bg-brand-600 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          >
+            <Plus className="w-3.5 h-3.5" aria-hidden />
+            New version
+          </button>
         </div>
 
         <div className="relative">
-          <label htmlFor="library-search" className="sr-only">
-            Search saved metadata
+          <label htmlFor="templates-search" className="sr-only">
+            Search templates
           </label>
           <Search
             className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
             aria-hidden
           />
           <input
-            id="library-search"
+            id="templates-search"
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by table name…"
+            placeholder="Search by name, type, version…"
             className="w-full border border-border-subtle rounded-lg pl-9 pr-3 py-1.5 text-sm bg-surface focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
             autoComplete="off"
           />
@@ -113,7 +147,7 @@ export default function LibraryList({ selectedId }) {
             >
               All
             </button>
-            {templateKeys.map((key) => (
+            {typeKeys.map((key) => (
               <button
                 key={key}
                 type="button"
@@ -123,18 +157,18 @@ export default function LibraryList({ selectedId }) {
                   filterTemplate === key ? FILTER_CHIP_SELECTED : FILTER_CHIP_IDLE
                 }`}
               >
-                {TYPE_LABELS[key]}
+                {templateLabel(key)}
               </button>
             ))}
           </div>
 
           <div className="flex min-w-0 items-center gap-2">
             <ArrowUpDown className="w-4 h-4 text-gray-400 shrink-0" aria-hidden />
-            <label htmlFor="library-sort" className="text-xs text-gray-500 shrink-0">
+            <label htmlFor="templates-sort" className="text-xs text-gray-500 shrink-0">
               Sort
             </label>
             <select
-              id="library-sort"
+              id="templates-sort"
               value={sortMode}
               onChange={(e) => setSortMode(e.target.value)}
               className="min-w-0 flex-1 max-w-full border border-border-subtle rounded-lg px-2 py-1 text-xs bg-surface focus:ring-2 focus:ring-brand-500 focus:border-brand-500 sm:max-w-[11rem]"
@@ -149,7 +183,7 @@ export default function LibraryList({ selectedId }) {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pt-2 pr-0.5" aria-label="Saved metadata list">
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pt-2 pr-0.5" aria-label="Template versions list">
         {isLoading && <ListSkeleton />}
 
         {isError && (
@@ -159,9 +193,9 @@ export default function LibraryList({ selectedId }) {
         {!isLoading && !isError && items?.length === 0 && (
           <div className="rounded-xl border border-border-subtle bg-surface p-5 text-center text-sm text-gray-500">
             <Inbox className="w-10 h-10 mx-auto text-gray-300 mb-2" aria-hidden />
-            <p>No saved metadata yet.</p>
-            <Link to="/" className="text-brand-500 hover:underline mt-1 inline-block">
-              Start a session
+            <p>No template versions yet.</p>
+            <Link to="/templates/new" className="text-brand-500 hover:underline mt-1 inline-block">
+              Create template
             </Link>
           </div>
         )}
@@ -174,11 +208,12 @@ export default function LibraryList({ selectedId }) {
           !isError &&
           filteredSorted.map((item) => {
             const isSelected = item.id === selectedId
+            const title = `${templateLabel(item.type)} · v${item.version}`
             return (
               <button
                 key={item.id}
                 type="button"
-                onClick={() => navigate(`/library/${item.id}`)}
+                onClick={() => navigate(`/templates/${item.id}`)}
                 aria-current={isSelected ? 'true' : undefined}
                 className={`w-full text-left rounded-xl border p-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
                   isSelected
@@ -186,11 +221,19 @@ export default function LibraryList({ selectedId }) {
                     : 'border-border-subtle bg-surface hover:border-gray-300 shadow-card'
                 }`}
               >
-                <p className="text-sm font-medium text-gray-900 truncate leading-tight" title={item._label}>
-                  {item._label}
+                <p className="text-sm font-medium text-gray-900 truncate leading-tight" title={title}>
+                  {title}
                 </p>
-                <div className="mt-1">
-                  <MetadataBadges templateType={item.template_type} isCombined={item._isCombined} />
+                <p className="text-xs text-gray-600 mt-0.5 truncate" title={item.name}>
+                  {item.name}
+                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {item.is_active && (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[10px] font-semibold bg-brand-50 text-brand-800 border border-brand-200/80">
+                      <Star className="w-3 h-3" aria-hidden />
+                      Default
+                    </span>
+                  )}
                 </div>
                 <p className="mt-1.5 text-[11px] text-gray-400 leading-snug">
                   <span className="inline-flex items-center gap-1">
@@ -200,17 +243,9 @@ export default function LibraryList({ selectedId }) {
                   <span className="mx-1.5 text-gray-300" aria-hidden>
                     ·
                   </span>
-                  <span
-                    className="inline-flex items-center align-middle px-1.5 py-0 rounded-full text-[10px] font-semibold bg-brand-50 text-brand-800 border border-brand-200/80"
-                    title={`Version ${item.version}`}
-                  >
+                  <span className="inline-flex items-center gap-0.5 text-gray-500">
+                    <Hash className="w-3 h-3 shrink-0" aria-hidden />
                     v{item.version}
-                  </span>
-                  <span className="mx-1.5 text-gray-300" aria-hidden>
-                    ·
-                  </span>
-                  <span className="text-gray-400" title={new Date(item.created_at).toISOString()}>
-                    Created {formatRelative(new Date(item.created_at), new Date())}
                   </span>
                 </p>
               </button>

@@ -1,7 +1,6 @@
 -- Function: {{CATALOG}}.{{SCHEMA}}.get_full_lineage
 -- Type: TABLE function
--- Description: Returns both forward (downstream) and backward (upstream) lineage for a given table
---              with job/pipeline details. The direction column indicates UPSTREAM or DOWNSTREAM.
+-- Description: Combined upstream and downstream lineage; table_full_name is one FQN; direction column UPSTREAM/DOWNSTREAM.
 -- Usage: SELECT * FROM {{CATALOG}}.{{SCHEMA}}.get_full_lineage('catalog.schema.table')
 
 CREATE OR REPLACE FUNCTION {{CATALOG}}.{{SCHEMA}}.get_full_lineage(
@@ -25,7 +24,7 @@ RETURNS TABLE (
   last_event_time TIMESTAMP
 )
 LANGUAGE SQL
-COMMENT 'Returns both forward (downstream) and backward (upstream) lineage for a given table with job/pipeline details. The direction column indicates UPSTREAM or DOWNSTREAM. Usage: SELECT * FROM {{CATALOG}}.{{SCHEMA}}.get_full_lineage("catalog.schema.table")'
+COMMENT 'Combined upstream and downstream lineage in one result. Parameter table_full_name is one string catalog.schema.table (Genify passes the session table FQN). Column direction is UPSTREAM or DOWNSTREAM; other columns mirror single-direction lineage (sources, targets, types, jobs, pipelines, etc.). Empty result if no lineage is recorded.'
 RETURN
   SELECT
     'UPSTREAM' AS direction,

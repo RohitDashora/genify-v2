@@ -139,6 +139,20 @@ def _summarize_context(context: dict) -> str:
     for key, data in context.items():
         if key.startswith("_"):
             continue
+        if isinstance(data, dict) and data.get("_mcp_error"):
+            text = f"[Tool failed] {data.get('detail', '')}"
+            parts.append(f"## {key}\n{truncate_chars(text, limit)}")
+            continue
+        if isinstance(data, dict):
+            sub = []
+            for tk, tv in data.items():
+                if isinstance(tv, dict) and tv.get("_mcp_error"):
+                    sub.append(f"- {tk}: [Tool failed] {tv.get('detail', '')}")
+                else:
+                    t = str(tv) if not isinstance(tv, str) else tv
+                    sub.append(f"- {tk}: {truncate_chars(t, limit)}")
+            parts.append(f"## {key}\n" + "\n".join(sub))
+            continue
         text = str(data) if not isinstance(data, str) else data
         parts.append(f"## {key}\n{truncate_chars(text, limit)}")
     return "\n\n".join(parts) if parts else "No context data available."

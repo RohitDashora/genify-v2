@@ -90,10 +90,26 @@ class EventStreamer:
             payload["completed_id"] = completed_id
         return {"event": "complete", "data": json.dumps(payload)}
 
-    def error(self, code: str, message: str) -> dict:
+    def error(
+        self,
+        code: str,
+        message: str,
+        *,
+        section_key: str | None = None,
+    ) -> dict:
+        payload: dict[str, Any] = {"code": code, "message": message}
+        if section_key:
+            payload["section_key"] = section_key
         return {
             "event": "error",
-            "data": json.dumps({"code": code, "message": message}),
+            "data": json.dumps(payload),
+        }
+
+    def full_yaml(self, yaml_content: str, *, is_partial: bool = False) -> dict:
+        """Authoritative merged YAML for the client (prefer over yaml_chunk accumulation)."""
+        return {
+            "event": "full_yaml",
+            "data": json.dumps({"yaml": yaml_content, "is_partial": bool(is_partial)}),
         }
 
     def trace(

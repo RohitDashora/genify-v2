@@ -55,6 +55,15 @@ class MCPServerConfig:
 
 
 @dataclass(frozen=True)
+class YamlMergeConfig:
+    """Section YAML merge: single top-level key, nested strip vs template, LLM retries (not MCP)."""
+
+    merge_max_retries: int = 2
+    nested_validation: str = "strip"  # off | strip
+    canonical_json_enabled: bool = False
+
+
+@dataclass(frozen=True)
 class MCPToolOverridesConfig:
     """Optional planner/gather overrides for MCP tools (see app.yaml mcp_tool_overrides)."""
 
@@ -68,6 +77,7 @@ class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     lakebase: LakebaseConfig = field(default_factory=LakebaseConfig)
     context_truncation: ContextTruncationConfig = field(default_factory=ContextTruncationConfig)
+    yaml_merge: YamlMergeConfig = field(default_factory=YamlMergeConfig)
     mcp_servers: tuple[MCPServerConfig, ...] = ()
     mcp_tool_overrides: MCPToolOverridesConfig = field(default_factory=MCPToolOverridesConfig)
 
@@ -112,6 +122,13 @@ def _build_config(raw: dict) -> AppConfig:
         executor_section_chars_per_key=int(ct_raw.get("executor_section_chars_per_key", 2000)),
         prior_yaml_tail_chars=int(ct_raw.get("prior_yaml_tail_chars", 3000)),
         interactive_known_data_chars=int(ct_raw.get("interactive_known_data_chars", 2000)),
+    )
+
+    ym_raw = cfg.get("yaml_merge") or {}
+    yaml_merge = YamlMergeConfig(
+        merge_max_retries=int(ym_raw.get("merge_max_retries", 2)),
+        nested_validation=str(ym_raw.get("nested_validation", "strip")).lower(),
+        canonical_json_enabled=bool(ym_raw.get("canonical_json_enabled", False)),
     )
 
     mcp_servers = tuple(
@@ -169,6 +186,7 @@ def _build_config(raw: dict) -> AppConfig:
         llm=llm,
         lakebase=lakebase,
         context_truncation=context_truncation,
+        yaml_merge=yaml_merge,
         mcp_servers=mcp_servers,
         mcp_tool_overrides=mcp_tool_overrides,
     )

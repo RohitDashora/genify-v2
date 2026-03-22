@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Sparkles, Home, BookMarked, Menu, X } from 'lucide-react'
+import { Sparkles, Home, BookMarked, LayoutTemplate, Menu, X } from 'lucide-react'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Home', icon: Home, end: true },
   { to: '/library', label: 'Library', icon: BookMarked },
+  { to: '/templates', label: 'Templates', icon: LayoutTemplate },
 ]
 
 function navClass({ isActive }) {

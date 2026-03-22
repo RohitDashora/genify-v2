@@ -1,17 +1,29 @@
-import { useState, useMemo, useCallback, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import CodeMirror from '@uiw/react-codemirror'
 import { yaml as yamlLang } from '@codemirror/lang-yaml'
 import { githubLight } from '@uiw/codemirror-theme-github'
 import jsYaml from 'js-yaml'
-import { ArrowLeft, ClipboardCopy, Check, Loader2, RotateCcw, Save } from 'lucide-react'
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ClipboardCopy,
+  FileCode,
+  FileText,
+  Loader2,
+  RotateCcw,
+  Save,
+} from 'lucide-react'
 import { fetchJSON } from '../../api'
 import { formatCompletedLabel } from '../../utils/tableRef'
 import TranscriptMarkdown from '../TranscriptMarkdown'
 import HelpHint from '../HelpHint'
+import MetadataBadges from './MetadataBadges'
 
-const TYPE_LABELS = { table_comment: 'Table comment', genie: 'Genie' }
+const TITLE_ID = 'library-detail-heading'
 
 export default function LibraryDetail() {
   const { completedId } = useParams()
@@ -25,8 +37,10 @@ export default function LibraryDetail() {
   const [saving, setSaving] = useState(false)
   const [copiedYaml, setCopiedYaml] = useState(false)
   const [copiedMd, setCopiedMd] = useState(false)
+  const [copyMenuOpen, setCopyMenuOpen] = useState(false)
   const copyYamlTimer = useRef(null)
   const copyMdTimer = useRef(null)
+  const copyMenuRef = useRef(null)
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['completed', completedId],
@@ -38,6 +52,17 @@ export default function LibraryDetail() {
   const markdownFromServer = data?.markdown_content ?? ''
   const currentYaml = draftYaml ?? savedYaml
   const dirty = draftYaml !== null && draftYaml !== savedYaml
+
+  useEffect(() => {
+    if (!copyMenuOpen) return
+    const onDoc = (e) => {
+      if (copyMenuRef.current && !copyMenuRef.current.contains(e.target)) {
+        setCopyMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [copyMenuOpen])
 
   const handleYamlChange = useCallback((value) => {
     setDraftYaml(value)
@@ -76,6 +101,7 @@ export default function LibraryDetail() {
     if (timerRef.current) clearTimeout(timerRef.current)
     setCopied(true)
     timerRef.current = setTimeout(() => setCopied(false), 2000)
+    setCopyMenuOpen(false)
   }
 
   if (isLoading) {
@@ -101,60 +127,88 @@ export default function LibraryDetail() {
   const { label, isCombined } = formatCompletedLabel(data.table_fqn, data.table_ref)
 
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+      <nav className="shrink-0 text-xs text-gray-500 flex items-center gap-1 flex-wrap" aria-label="Breadcrumb">
+        <Link to="/" className="hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 rounded">
+          Home
+        </Link>
+        <ChevronRight className="w-3.5 h-3.5 shrink-0 text-gray-400" aria-hidden />
+        <Link to="/library" className="hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 rounded">
+          Library
+        </Link>
+        <ChevronRight className="w-3.5 h-3.5 shrink-0 text-gray-400" aria-hidden />
+        <span className="text-gray-700 truncate max-w-[min(100%,12rem)]" title={label}>
+          {label}
+        </span>
+      </nav>
+
       {/* Header */}
-      <div className="flex items-start gap-3 flex-wrap">
+      <div className="shrink-0 flex items-start gap-3 flex-wrap">
         <button
           type="button"
           onClick={() => navigate('/library')}
-          className="lg:hidden p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 shrink-0"
+          className="lg:hidden p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
           aria-label="Back to library"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex-1 min-w-0">
-          <h2 className="text-base font-semibold text-gray-900 truncate flex items-center gap-2" title={label}>
-            {label}
-            <HelpHint label="About this item">
-              {mode === 'yaml'
-                ? 'YAML is the source of truth. Edit and save here; the Markdown preview is regenerated from YAML on save.'
-                : 'Read-only preview generated from YAML. Copy for documentation or paste into tools.'}
-            </HelpHint>
-          </h2>
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <span className="inline-block px-1.5 py-0.5 rounded text-[11px] font-medium bg-gray-100 text-gray-600">
-              {TYPE_LABELS[data.template_type] || data.template_type}
-            </span>
-            {isCombined && (
-              <span className="inline-block px-1.5 py-0.5 rounded text-[11px] font-medium bg-blue-50 text-blue-700">
-                Combined
+          <div className="flex flex-wrap items-center gap-2">
+            <h2
+              id={TITLE_ID}
+              className="text-lg font-semibold text-gray-900 truncate flex items-center gap-2"
+              title={label}
+            >
+              {label}
+              <HelpHint label="About this item">
+                {mode === 'yaml'
+                  ? 'YAML is the source of truth. Edit and save here; the Markdown preview is regenerated from YAML on save.'
+                  : 'Read-only preview generated from YAML. Copy for documentation or paste into tools.'}
+              </HelpHint>
+            </h2>
+            {dirty && (
+              <span className="text-xs px-2 py-0.5 rounded-full border border-amber-200 bg-warning-50 text-warning-800 font-medium">
+                Unsaved changes
               </span>
             )}
+          </div>
+          <div className="mt-1">
+            <MetadataBadges templateType={data.template_type} isCombined={isCombined} />
           </div>
         </div>
       </div>
 
-      {/* Toggle + actions */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="inline-flex rounded-lg border border-border-subtle bg-gray-50 p-0.5">
-          {['yaml', 'markdown'].map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                mode === m
-                  ? 'bg-surface shadow-sm text-gray-900'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {m === 'yaml' ? 'YAML' : 'Markdown'}
-            </button>
-          ))}
+      {/* Toolbar */}
+      <div className="shrink-0 flex flex-wrap items-center gap-3">
+        <div className="inline-flex rounded-lg border border-border-subtle bg-gray-50 p-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setMode('yaml')}
+            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors inline-flex items-center gap-1.5 ${
+              mode === 'yaml'
+                ? 'bg-surface shadow-sm text-gray-900'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <FileCode className="w-3.5 h-3.5 shrink-0" aria-hidden />
+            YAML
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('markdown')}
+            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors inline-flex items-center gap-1.5 ${
+              mode === 'markdown'
+                ? 'bg-surface shadow-sm text-gray-900'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5 shrink-0" aria-hidden />
+            Markdown
+          </button>
         </div>
 
         {mode === 'yaml' && (
-          <>
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handleSave}
@@ -173,47 +227,91 @@ export default function LibraryDetail() {
               <RotateCcw className="w-3.5 h-3.5" />
               Revert
             </button>
-          </>
+          </div>
         )}
 
-        <div className="flex items-center gap-2 ml-auto">
-          <button
-            type="button"
-            onClick={() => copyToClipboard(currentYaml, setCopiedYaml, copyYamlTimer)}
-            className="px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium hover:border-gray-400 inline-flex items-center gap-1.5"
-          >
-            {copiedYaml ? <Check className="w-3.5 h-3.5 text-success-700" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
-            {copiedYaml ? 'Copied' : 'Copy YAML'}
-          </button>
-          <button
-            type="button"
-            onClick={() => copyToClipboard(markdownFromServer, setCopiedMd, copyMdTimer)}
-            className="px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium hover:border-gray-400 inline-flex items-center gap-1.5"
-          >
-            {copiedMd ? <Check className="w-3.5 h-3.5 text-success-700" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
-            {copiedMd ? 'Copied' : 'Copy Markdown'}
-          </button>
+        <div className="flex flex-wrap items-center gap-2 w-full min-[480px]:w-auto min-[480px]:ml-auto min-[480px]:justify-end">
+          <div className="hidden md:flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => copyToClipboard(currentYaml, setCopiedYaml, copyYamlTimer)}
+              className="px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium hover:border-gray-400 inline-flex items-center gap-1.5"
+            >
+              {copiedYaml ? <Check className="w-3.5 h-3.5 text-success-700" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
+              {copiedYaml ? 'Copied' : 'Copy YAML'}
+            </button>
+            <button
+              type="button"
+              onClick={() => copyToClipboard(markdownFromServer, setCopiedMd, copyMdTimer)}
+              className="px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium hover:border-gray-400 inline-flex items-center gap-1.5"
+            >
+              {copiedMd ? <Check className="w-3.5 h-3.5 text-success-700" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
+              {copiedMd ? 'Copied' : 'Copy Markdown'}
+            </button>
+          </div>
+
+          <div className="relative md:hidden w-full min-[480px]:w-auto" ref={copyMenuRef}>
+            <button
+              type="button"
+              onClick={() => setCopyMenuOpen((o) => !o)}
+              className="w-full min-[480px]:w-auto px-3 py-1.5 rounded-lg border border-border-subtle text-xs font-medium hover:border-gray-400 inline-flex items-center justify-center gap-1.5"
+              aria-expanded={copyMenuOpen}
+              aria-haspopup="true"
+            >
+              Copy
+              <ChevronDown className="w-3.5 h-3.5 shrink-0" aria-hidden />
+            </button>
+            {copyMenuOpen && (
+              <div
+                className="absolute right-0 left-0 min-[480px]:left-auto top-full mt-1 z-20 min-w-[12rem] rounded-lg border border-border-subtle bg-surface shadow-card py-1"
+                role="menu"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 flex items-center gap-2"
+                  onClick={() => copyToClipboard(currentYaml, setCopiedYaml, copyYamlTimer)}
+                >
+                  {copiedYaml ? <Check className="w-3.5 h-3.5 text-success-700" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
+                  Copy YAML
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 flex items-center gap-2"
+                  onClick={() => copyToClipboard(markdownFromServer, setCopiedMd, copyMdTimer)}
+                >
+                  {copiedMd ? <Check className="w-3.5 h-3.5 text-success-700" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
+                  Copy Markdown
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Validation error */}
       {yamlError && mode === 'yaml' && (
-        <div className="rounded-lg border border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger-700">
+        <div className="shrink-0 rounded-lg border border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger-700">
           {yamlError}
         </div>
       )}
 
       {/* Stale markdown notice */}
       {dirty && mode === 'markdown' && (
-        <div className="rounded-lg border border-amber-200 bg-warning-50 px-3 py-2 text-xs text-warning-800">
+        <div className="shrink-0 rounded-lg border border-amber-200 bg-warning-50 px-3 py-2 text-xs text-warning-800">
           Preview reflects the last saved version. Save your YAML changes to update it.
         </div>
       )}
 
       {/* Content pane */}
-      <div className="rounded-xl border border-border-subtle bg-surface shadow-card overflow-hidden">
+      <div
+        className="rounded-xl border border-border-subtle bg-surface shadow-card overflow-hidden flex-1 min-h-0 flex flex-col"
+        role="region"
+        aria-labelledby={TITLE_ID}
+      >
         {mode === 'yaml' ? (
-          <div className="genify-cm library-cm">
+          <div className="genify-cm library-cm flex min-h-0 flex-1 flex-col overflow-hidden">
             <CodeMirror
               value={currentYaml}
               theme={githubLight}
@@ -223,7 +321,7 @@ export default function LibraryDetail() {
             />
           </div>
         ) : (
-          <div className="p-4 sm:p-6 overflow-auto max-h-[70vh]">
+          <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
             {markdownFromServer ? (
               <TranscriptMarkdown>{markdownFromServer}</TranscriptMarkdown>
             ) : (

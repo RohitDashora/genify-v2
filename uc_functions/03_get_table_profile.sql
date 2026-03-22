@@ -1,7 +1,7 @@
 -- Function: {{CATALOG}}.{{SCHEMA}}.get_table_profile
 -- Type: TABLE function
--- Description: Returns a comprehensive metadata profile of a given table including
---              table info, column details, type distribution, and storage properties
+-- Description: Category/key/value profile rows (TABLE_INFO, COLUMN_STATS, TYPE_DISTRIBUTION,
+--              COLUMN_DETAIL); p_catalog/p_schema/p_table are three name parts; Genify passes session table.
 -- Usage: SELECT * FROM {{CATALOG}}.{{SCHEMA}}.get_table_profile('catalog', 'schema', 'table')
 -- Filter: SELECT * FROM ... WHERE profile_category = 'TABLE_INFO'
 
@@ -16,7 +16,7 @@ RETURNS TABLE (
   profile_value    STRING
 )
 LANGUAGE SQL
-COMMENT 'Returns a comprehensive metadata profile of a given table including table info, column details, and storage properties'
+COMMENT 'Structured profile for one UC table as category/key/value rows (not one wide row). Parameters p_catalog, p_schema, and p_table are the three name parts (not one FQN). profile_category values include TABLE_INFO (owner, timestamps, format), COLUMN_STATS, TYPE_DISTRIBUTION, and COLUMN_DETAIL (human-readable per-column line). Filter or scan profile_category to focus on one aspect.'
 RETURN
   WITH table_info AS (
     SELECT table_type, table_owner, comment, created, created_by,

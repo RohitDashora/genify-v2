@@ -9,6 +9,8 @@ from sse_starlette.sse import EventSourceResponse
 
 from backend.db import get_pool, SCHEMA
 from backend.middleware import get_current_user
+from backend.agent.yaml_merge import remove_section_key
+
 from backend.models import (
     AnswerRequest,
     CompletedResponse,
@@ -223,6 +225,74 @@ async def answer_question(
             )
         conn.commit()
     return {"ok": True}
+
+
+@router.post("/{session_id}/retry-section")
+async def retry_section(
+    session_id: UUID,
+    user_email: str = Depends(get_current_user),
+):
+    """Drop the last merged section and re-run that step on the next SSE connection.
+
+    Decrements ``current_step`` and removes the previous step's ``section_key`` from
+    ``generated_yaml``. Idempotent if the session is already at step 0.
+    """
+    pool = _pool()
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"SELECT * FROM {SCHEMA}.sessions "
+                f"WHERE id = %s AND user_email = %s",
+                (str(session_id), user_email),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, detail="Session not found")
+            st = row.get("status") or ""
+            if st not in ("executing", "waiting_for_user"):
+                raise HTTPException(
+                    409,
+                    detail={
+                        "code": "retry_not_allowed",
+                        "message": f"Session status is '{st}', cannot retry a section",
+                    },
+                )
+            cs = int(row.get("current_step") or 0)
+            plan = row.get("plan")
+            if isinstance(plan, str):
+                plan = json.loads(plan)
+            plan = plan or []
+            if st == "waiting_for_user":
+                cur.execute(
+                    f"UPDATE {SCHEMA}.sessions SET "
+                    f"pending_section_yaml = '', pending_question = NULL, "
+                    f"status = 'executing', updated_at = now() WHERE id = %s",
+                    (str(session_id),),
+                )
+                conn.commit()
+                return {"ok": True, "cleared_pending": True}
+
+            if cs < 1:
+                raise HTTPException(
+                    400,
+                    detail={"code": "nothing_to_retry", "message": "No completed section to roll back"},
+                )
+            idx = cs - 1
+            if idx >= len(plan):
+                raise HTTPException(400, detail="Plan index out of range")
+            section_key = plan[idx].get("section_key", "")
+            if not section_key:
+                raise HTTPException(400, detail="Invalid plan step")
+            new_yaml = remove_section_key(row.get("generated_yaml") or "", section_key)
+            cur.execute(
+                f"UPDATE {SCHEMA}.sessions SET "
+                f"generated_yaml = %s, current_step = %s, "
+                f"pending_section_yaml = '', pending_question = NULL, "
+                f"status = 'executing', updated_at = now() WHERE id = %s",
+                (new_yaml, idx, str(session_id)),
+            )
+        conn.commit()
+    return {"ok": True, "current_step": idx}
 
 
 @router.delete("/{session_id}")

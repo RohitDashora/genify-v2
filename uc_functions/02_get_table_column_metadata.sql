@@ -1,6 +1,7 @@
 -- Function: {{CATALOG}}.{{SCHEMA}}.get_table_column_metadata
 -- Type: TABLE function
--- Description: Returns full column metadata and comments for a given table
+-- Description: Column metadata from information_schema.columns (p_catalog/p_schema/p_table;
+--              Genify passes session table). Ordinal order, types, nullability, comments.
 -- Usage: SELECT * FROM {{CATALOG}}.{{SCHEMA}}.get_table_column_metadata('catalog', 'schema', 'table')
 
 CREATE OR REPLACE FUNCTION {{CATALOG}}.{{SCHEMA}}.get_table_column_metadata(
@@ -20,7 +21,7 @@ RETURNS TABLE (
   numeric_scale            INT
 )
 LANGUAGE SQL
-COMMENT 'Returns full column metadata and comments for a given table'
+COMMENT 'Column metadata for one UC table from information_schema.columns. Parameters p_catalog, p_schema, and p_table are the three name parts (not one FQN). Returns one row per column in ordinal order: name, data type, nullability, default, column comment, and precision/length fields where applicable.'
 RETURN
   SELECT
     c.column_name,

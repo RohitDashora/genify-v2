@@ -1,4 +1,5 @@
-import { ArrowLeft, ClipboardCopy, Check, WifiOff } from 'lucide-react'
+import { ArrowLeft, ClipboardCopy, Check, WifiOff, RotateCcw } from 'lucide-react'
+import HelpHint from './HelpHint'
 
 const STREAM_WARNING_TOOLTIP =
   'Connection issue — the stream may reconnect automatically. If this persists, refresh the page.'
@@ -14,11 +15,14 @@ const STATUS_PILL = {
 export default function SessionPageHeader({
   tableLabel,
   session,
+  sectionChip,
   showYaml,
   onToggleYaml,
   yamlContent,
   onCopyYaml,
   copiedYaml,
+  onRetrySection,
+  retryingSection = false,
   onBack,
   streamWarning = false,
 }) {
@@ -49,7 +53,13 @@ export default function SessionPageHeader({
           <span className="capitalize">{session?.template_type?.replace('_', ' ')}</span>
           <span aria-hidden>|</span>
           <span>{session?.mode?.replace('_', ' ')}</span>
-          {session?.current_step != null && (
+          {sectionChip && (
+            <>
+              <span aria-hidden>|</span>
+              <span className="font-medium text-slate-700">{sectionChip}</span>
+            </>
+          )}
+          {!sectionChip && session?.current_step != null && (
             <>
               <span aria-hidden>|</span>
               <span>Step {session.current_step}</span>
@@ -76,17 +86,35 @@ export default function SessionPageHeader({
           {showYaml ? 'Hide YAML' : 'Show YAML'}
         </button>
         {yamlContent && (
+          <span className="inline-flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onCopyYaml}
+              className="text-xs px-3 py-1.5 rounded-md border border-border-subtle hover:border-gray-400 inline-flex items-center gap-1 bg-surface"
+            >
+              {copiedYaml ? (
+                <Check className="w-3.5 h-3.5 text-success-700" aria-hidden />
+              ) : (
+                <ClipboardCopy className="w-3.5 h-3.5" aria-hidden />
+              )}
+              {copiedYaml ? 'Copied' : 'Copy YAML'}
+            </button>
+            <HelpHint label="Copy YAML">
+              Copies the merged YAML shown in the panel. If the agent is waiting for your answer,
+              unmerged draft lines are included in the preview but only committed YAML is saved to
+              the session until you respond.
+            </HelpHint>
+          </span>
+        )}
+        {typeof onRetrySection === 'function' && (
           <button
             type="button"
-            onClick={onCopyYaml}
-            className="text-xs px-3 py-1.5 rounded-md border border-border-subtle hover:border-gray-400 inline-flex items-center gap-1 bg-surface"
+            onClick={onRetrySection}
+            disabled={retryingSection}
+            className="text-xs px-3 py-1.5 rounded-md border border-border-subtle hover:border-gray-400 inline-flex items-center gap-1 bg-surface disabled:opacity-50"
           >
-            {copiedYaml ? (
-              <Check className="w-3.5 h-3.5 text-success-700" aria-hidden />
-            ) : (
-              <ClipboardCopy className="w-3.5 h-3.5" aria-hidden />
-            )}
-            {copiedYaml ? 'Copied' : 'Copy YAML'}
+            <RotateCcw className="w-3.5 h-3.5" aria-hidden />
+            {retryingSection ? 'Retrying…' : 'Retry section'}
           </button>
         )}
       </div>

@@ -1,10 +1,11 @@
 import { Outlet, useMatch } from 'react-router-dom'
-import LibraryList from './LibraryList'
+import TemplateList from './TemplateList'
 
-export default function LibraryLayout() {
-  const detailMatch = useMatch('/library/:completedId')
-  const hasDetail = Boolean(detailMatch)
-  const selectedId = detailMatch?.params?.completedId
+export default function TemplatesLayout() {
+  const newMatch = useMatch('/templates/new')
+  const detailMatch = useMatch('/templates/:templateId')
+  const hasDetail = Boolean(newMatch || detailMatch)
+  const selectedId = detailMatch?.params?.templateId
 
   return (
     <div className="flex h-full max-h-full min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-card">
@@ -14,7 +15,7 @@ export default function LibraryLayout() {
             hasDetail ? 'hidden' : 'flex'
           } lg:flex`}
         >
-          <LibraryList selectedId={selectedId} />
+          <TemplateList selectedId={selectedId} />
         </div>
 
         <div
@@ -26,7 +27,7 @@ export default function LibraryLayout() {
             <Outlet />
           ) : (
             <div className="rounded-xl border border-dashed border-border-subtle bg-surface-muted flex flex-1 min-h-0 items-center justify-center text-gray-400 text-sm px-4">
-              Select a saved item to view
+              Select a template version
             </div>
           )}
         </div>

@@ -182,6 +182,8 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.sessions (
     plan             JSONB,
     current_step     INTEGER      DEFAULT 0,
     generated_yaml   TEXT         DEFAULT '',
+    pending_section_yaml TEXT    DEFAULT '',
+    generated_json   JSONB,
     conversation     JSONB        DEFAULT '[]'::jsonb,
     context_cache    JSONB        DEFAULT '{{}}'::jsonb,
     output_format    VARCHAR(20)  DEFAULT 'yaml',
@@ -202,6 +204,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.completed_metadata (
     session_id       UUID REFERENCES {SCHEMA}.sessions(id) ON DELETE SET NULL,
     user_email       VARCHAR(255) NOT NULL,
     template_type    VARCHAR(50)  NOT NULL,
+    template_version INTEGER,
     table_ref        JSONB        NOT NULL,
     yaml_content     TEXT         NOT NULL,
     markdown_content TEXT,
@@ -241,9 +244,21 @@ def init_db() -> None:
                         f"ALTER TABLE {SCHEMA}.sessions "
                         f"ADD COLUMN IF NOT EXISTS pending_question JSONB"
                     )
+                    cur.execute(
+                        f"ALTER TABLE {SCHEMA}.sessions "
+                        f"ADD COLUMN IF NOT EXISTS pending_section_yaml TEXT DEFAULT ''"
+                    )
+                    cur.execute(
+                        f"ALTER TABLE {SCHEMA}.sessions "
+                        f"ADD COLUMN IF NOT EXISTS generated_json JSONB"
+                    )
+                    cur.execute(
+                        f"ALTER TABLE {SCHEMA}.completed_metadata "
+                        f"ADD COLUMN IF NOT EXISTS template_version INTEGER"
+                    )
                 conn.commit()
         except Exception as e:
-            logger.warning(f"pending_question migration: {e}")
+            logger.warning(f"schema migration (sessions/completed extras): {e}")
         logger.info("Genify schema initialisation complete")
     except Exception as e:
         logger.error(f"DB init failed: {e}", exc_info=True)

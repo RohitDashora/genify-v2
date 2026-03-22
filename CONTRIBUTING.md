@@ -5,7 +5,7 @@ Thanks for helping improve this **demo / reference** repository. Changes should 
 ## Documentation
 
 - User-facing docs live under **[docs/](docs/)** — update **[docs/README.md](docs/README.md)** if you add a new guide or change the recommended reading order.
-- **Product / UX copy:** **[docs/product-overview.md](docs/product-overview.md)** and **[docs/ui-design.md](docs/ui-design.md)**.
+- **Product / UX copy:** **[docs/product-overview.md](docs/product-overview.md)** and **[docs/ui-design.md](docs/ui-design.md)**. UI screenshot assets: **[docs/images/README.md](docs/images/README.md)** (replace PNGs in place; keep filenames stable).
 - **LLM limits:** document new `app.yaml` keys in **[docs/llm-and-tokens.md](docs/llm-and-tokens.md)** only if **[src/genify/backend/config.py](src/genify/backend/config.py)** loads them and code consumes them—avoid documenting “dead” YAML.
 - **New MCP tools or servers:** update **[docs/mcp-servers-and-tools.md](docs/mcp-servers-and-tools.md)** and, if wiring or gather behavior changes, **[docs/mcp-and-agents.md](docs/mcp-and-agents.md)** / **[docs/architecture.md](docs/architecture.md)**.
 - Architecture or MCP topology changes should include an update to **[docs/architecture.md](docs/architecture.md)** (including **§0 Three pillars** when the split of responsibilities changes) or **[docs/mcp-and-agents.md](docs/mcp-and-agents.md)** (Mermaid diagrams render on GitHub).

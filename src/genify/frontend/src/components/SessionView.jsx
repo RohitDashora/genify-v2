@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ClipboardCopy, Download, Loader2, BookMarked } from 'lucide-react'
@@ -21,6 +21,17 @@ const TRACE_CAP = 500
 function prefersReducedMotion() {
   if (typeof window === 'undefined' || !window.matchMedia) return false
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function previewYamlFromSession(session) {
+  if (!session) return ''
+  const g = session.generated_yaml || ''
+  const p = session.pending_section_yaml || ''
+  const gt = g.trim()
+  const pt = p.trim()
+  if (!pt) return g
+  if (!gt) return p
+  return `${g}\n${p}`
 }
 
 function hydrateFromConversation(conversation) {
@@ -63,6 +74,7 @@ export default function SessionView() {
   const [streamEpoch, setStreamEpoch] = useState(0)
   const [streamWarning, setStreamWarning] = useState(false)
   const [copiedYaml, setCopiedYaml] = useState(false)
+  const [retryingSection, setRetryingSection] = useState(false)
   const [showJumpLatest, setShowJumpLatest] = useState(false)
   const [ariaQuestion, setAriaQuestion] = useState('')
 
@@ -195,9 +207,8 @@ export default function SessionView() {
     })
     setAgentWorking(false)
     setActivityLine('')
-    if (session.generated_yaml) {
-      setYamlContent((y) => y || session.generated_yaml || '')
-    }
+    const py = previewYamlFromSession(session)
+    if (py) setYamlContent((y) => y || py)
   }, [session, question, isComplete])
 
   useEffect(() => {
@@ -206,7 +217,7 @@ export default function SessionView() {
       setIsComplete(true)
       setAgentWorking(false)
       setActivityLine('')
-      setYamlContent((y) => y || session.generated_yaml || '')
+      setYamlContent((y) => y || previewYamlFromSession(session))
     }
     if (session.status === 'failed' && !terminalFailHandledRef.current) {
       terminalFailHandledRef.current = true
@@ -294,6 +305,9 @@ export default function SessionView() {
           return prev + d.content
         })
       },
+      onFullYaml: (d) => {
+        if (d && typeof d.yaml === 'string') setYamlContent(d.yaml)
+      },
       onSectionComplete: (d) => {
         setActivityLine(`${d.section} done (${d.step}/${d.total})`)
       },
@@ -339,7 +353,11 @@ export default function SessionView() {
       onError: (d) => {
         setAgentWorking(false)
         setActivityLine('')
-        addMessage('error', d.message || 'Something went wrong', 'error')
+        const msg =
+          d.code === 'yaml_merge_invalid'
+            ? `${d.message || 'YAML merge failed'}${d.section_key ? ` (${d.section_key})` : ''}`
+            : d.message || 'Something went wrong'
+        addMessage('error', msg, 'error')
       },
       onDisconnect: () => {},
     }),
@@ -472,6 +490,27 @@ export default function SessionView() {
     copyTimerRef.current = setTimeout(() => setCopiedYaml(false), 2000)
   }
 
+  const sectionChip = useMemo(() => {
+    const total = session?.plan?.length
+    if (!total || isComplete) return null
+    const cur = Math.min((session.current_step ?? 0) + 1, total)
+    return `Section ${cur} of ${total}`
+  }, [session, isComplete])
+
+  const handleRetrySection = useCallback(async () => {
+    if (!id) return
+    setRetryingSection(true)
+    try {
+      await fetchJSON(`/sessions/${id}/retry-section`, { method: 'POST', body: '{}' })
+      await queryClient.invalidateQueries({ queryKey: ['session', id] })
+      setStreamEpoch((e) => e + 1)
+    } catch (e) {
+      setAnswerBanner(e.message || 'Retry failed')
+    } finally {
+      setRetryingSection(false)
+    }
+  }, [id, queryClient])
+
   if (!id) return null
 
   if (sessionLoading) {
@@ -515,11 +554,19 @@ export default function SessionView() {
       <SessionPageHeader
         tableLabel={tableLabel}
         session={session}
+        sectionChip={sectionChip}
         showYaml={showYaml}
         onToggleYaml={() => setShowYaml(!showYaml)}
         yamlContent={yamlContent}
         onCopyYaml={copyYaml}
         copiedYaml={copiedYaml}
+        onRetrySection={
+          !isComplete &&
+          (session.status === 'executing' || session.status === 'waiting_for_user')
+            ? handleRetrySection
+            : undefined
+        }
+        retryingSection={retryingSection}
         onBack={() => navigate('/')}
         streamWarning={streamWarning && !isComplete}
       />

@@ -1,6 +1,6 @@
 # Genify agentic loop
 
-This document describes the **gather → plan → execute** orchestration in Genify: how `run_agent` drives MCP context gathering, LLM planning, per-section execution, optional interactive pauses, and finalization. It complements **[architecture.md](architecture.md)** (system context, MCP topology, UI, full SSE table) and **[mcp-and-agents.md](mcp-and-agents.md)** (MCP wiring and operations).
+This document describes the **gather → plan → execute** orchestration in Genify: how `run_agent` drives MCP context gathering, LLM planning, per-section execution, optional interactive pauses, and finalization. It complements **[architecture.md](architecture.md)** (system context, MCP topology, UI, full SSE table) and **[mcp-and-agents.md](mcp-and-agents.md)** (MCP wiring, gather policy, multi-worker).
 
 **Scope:** server-side agent behavior in [`src/genify/backend/agent/core.py`](../src/genify/backend/agent/core.py). The browser contract (EventSource, `question` / `POST /answer`) is summarized here; see [architecture.md §5 — Client lifecycle](architecture.md#5-agent-session-sequence-simplified) for full session UX detail.
 
@@ -64,6 +64,8 @@ sequenceDiagram
 - Runs only when **`context_cache`** is empty for the session. If already populated, the agent emits a **`trace`** line and skips gather.  
 - **Serialized per `session_id`** with an `asyncio.Lock`: concurrent `GET …/stream` connections do not each run a full MCP tool storm; the follower reloads the session and may see cached context after the leader finishes.  
 - Implementation: `_iter_gather_context_events` → `MCPRegistry` / `call_tool` for tables in scope; results plus **`_mcp_tool_manifest`** are persisted to `context_cache`.  
+- **Incomplete gather** (e.g. stream ends before gather finishes, or MCP connect fails before any payload is built) does **not** write an empty `{}` to `context_cache`, so the next `/stream` can run gather again without “locking in” an empty cache row.  
+- **Fail-open:** tool exceptions or MCP error payloads are stored per tool (no retries); gather continues and planning/execution use partial context.  
 - Tool selection and argument shaping: [`tool_manifest.py`](../src/genify/backend/mcp/tool_manifest.py), `_build_tool_args` in `core.py` (only tools whose schemas match known table-parameter patterns auto-gather).  
 
 **Important:** The **executor never calls MCP** for routine section work. It only reads the **cached** context blob.
@@ -78,11 +80,13 @@ sequenceDiagram
 ### 3. Execute (LLM per section)
 
 - Steps run from **`current_step`** through `len(plan) - 1`.  
+- **`generated_yaml`** is a **single merged YAML document** (see [`yaml_merge.py`](../src/genify/backend/agent/yaml_merge.py)): each section fragment must have **one top-level key** equal to that step’s **`section_key`**. Merge uses optional **nested strip** vs `template.template[section_key]` (`app.yaml` → `yaml_merge.nested_validation`). LLM **merge retries** are configurable (`merge_max_retries`); MCP is not retried.  
 - For each step, either:  
   - **`execute_step`** ([`executor.py`](../src/genify/backend/agent/executor.py)) — fills the section from context + prior YAML; may set **`needs_user_input`** in interactive mode.  
-  - **`incorporate_answer`** — after a pause, merges the user’s reply into the partial YAML when the last conversation message is **`user`** at the current step.  
-- Progress is persisted with **`_save_step_progress`** (`current_step`, `generated_yaml`, `conversation`, `executing`).  
-- On pause: **`_save_waiting_state`** stores **`pending_question`**, sets **`waiting_for_user`**, and the generator **returns** (client closes stream after `question` per UX contract).
+  - **`incorporate_answer`** — after a pause, regenerates section YAML from the user’s reply; **`pending_section_yaml`** holds the draft until merge.  
+- Progress is persisted with **`_save_step_progress`** (`current_step`, `generated_yaml`, `pending_section_yaml`, `conversation`, `executing`).  
+- On pause: **`_save_waiting_state`** stores **`pending_question`** and **`pending_section_yaml`** (draft only — not yet merged into `generated_yaml`), sets **`waiting_for_user`**, and the generator **returns** (client closes stream after `question` per UX contract).  
+- SSE: **`full_yaml`** carries the authoritative merged string (and optional partial preview); prefer it over **`yaml_chunk`** accumulation in the client.
 
 ### 4. Finalize
 

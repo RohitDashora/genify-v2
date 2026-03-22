@@ -10,15 +10,23 @@ Full documentation: **[docs/README.md](docs/README.md)** — start with **[docs/
 
 ### Screenshots
 
-**Home** — Unity Catalog catalog/schema pickers, **Select Tables** list (long comments previewed; full text on hover), Table comment vs Genie Space, hands-off vs interactive, and session list.
+**Home** — Unity Catalog catalog/schema pickers, **Select Tables**, Table comment vs Genie Space, hands-off vs interactive, **Your Sessions** (status filters).
 
 ![Genify Home — catalog, template type, and sessions](docs/images/screenshot-home.png)
+
+**Select Tables** — Filter tables, **Select visible** / **Clear**, table type pill (e.g. MANAGED).
+
+![Genify Select Tables — filters and table list](docs/images/screenshot-home-select-tables.png)
 
 **Library** — saved metadata cards, YAML / Markdown editor, copy and save.
 
 ![Genify Library — saved metadata and YAML editor](docs/images/screenshot-library.png)
 
-**Session flows** (MCP gather, activity trace, hands-off vs interactive, YAML streaming) — see [docs/product-overview.md — Session experience](docs/product-overview.md#session-experience-mcp-trace-hands-off-vs-interactive).
+**Templates** — versioned template YAML (`_meta`, `sections`), search and filters, default version.
+
+![Genify Templates — list and editor](docs/images/screenshot-templates.png)
+
+**Session flows** (MCP gather, activity trace, hands-off vs interactive, YAML streaming) — see [docs/product-overview.md — Session experience](docs/product-overview.md#session-experience-mcp-trace-hands-off-vs-interactive). Full figure set: [docs/ui-design.md](docs/ui-design.md), [docs/images/README.md](docs/images/README.md).
 
 ---
 

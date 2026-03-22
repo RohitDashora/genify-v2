@@ -25,6 +25,11 @@ config:
     pool_size: 5
 
   # Character caps for MCP/context text in LLM prompts (0 = no limit for tail/truncate where supported).
+  yaml_merge:
+    merge_max_retries: 2
+    nested_validation: strip # off | strip — align fragment keys with template.template[section_key]
+    canonical_json_enabled: false # optional dual-write JSONB on sessions.generated_json
+
   context_truncation:
     planning_chars_per_key: 7000 # planner: each MCP context key in the planning prompt
     executor_section_chars_per_key: 7000 # execute: each key in section context blob

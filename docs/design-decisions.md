@@ -34,6 +34,26 @@ Short rationale for major choices in this reference repo. For full diagrams see 
 
 ---
 
+## ADR-3b: MCP gather fail-open (no retries)
+
+**Decision:** Each `call_tool` runs **once** per `(table, tool)` while building `context_cache`. Failures and MCP error payloads are stored as structured entries; the run **continues**.
+
+**Rationale:** Some tools do not apply to all table types; retrying the same failing call rarely helps.
+
+**Tradeoff:** Planners must tolerate partial context (documented in prompts).
+
+---
+
+## ADR-5: Canonical YAML merge for sections
+
+**Decision:** Persist **`generated_yaml`** as one merged document. Section LLM output must use a **single top-level key** matching **`section_key`**. Interactive drafts live in **`pending_section_yaml`** until merged after **`incorporate_answer`**.
+
+**Rationale:** String concatenation duplicated YAML after partial-fill + resume.
+
+**Tradeoff:** Stricter model output; `merge_max_retries` and optional nested strip vs template add config surface.
+
+---
+
 ## ADR-4: Imperative `deploy.sh` pipeline
 
 **Decision:** Single shell entrypoint deploys **UC SQL → profiler app → Genify app** in order.

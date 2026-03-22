@@ -138,6 +138,9 @@ class MCPClient:
             result = _run_databricks_mcp_blocking(
                 self._client.call_tool, tool_name, arguments
             )
+            if getattr(result, "isError", False):
+                detail = _normalize_result(result)
+                return {"_mcp_error": True, "detail": detail or "MCP tool returned an error"}
             return _normalize_result(result)
         except Exception as e:
             logger.error(f"MCP [{self.name}] tool call failed: {tool_name}: {e}", exc_info=True)

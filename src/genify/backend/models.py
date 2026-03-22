@@ -85,6 +85,7 @@ class SessionResponse(BaseModel):
     plan: Optional[Any] = None
     current_step: int
     generated_yaml: str
+    pending_section_yaml: Optional[str] = None
     conversation: list[Any]
     output_format: str
     error_message: Optional[str] = None
@@ -119,6 +120,7 @@ class CompletedResponse(BaseModel):
     session_id: Optional[UUID] = None
     user_email: str
     template_type: str
+    template_version: Optional[int] = None
     table_ref: Any
     yaml_content: str
     markdown_content: Optional[str] = None

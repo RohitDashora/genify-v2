@@ -1,6 +1,6 @@
 -- Function: {{CATALOG}}.{{SCHEMA}}.list_jobs
 -- Type: TABLE function (uses http_request to call Databricks Jobs API)
--- Description: Lists Databricks jobs in the workspace. Returns job ID, name, creator, and creation time.
+-- Description: Workspace job list via Jobs API (not table-scoped; Genify table gather does not auto-call).
 --              Use name_filter to search by job name.
 -- Prerequisites: Requires a UC connection named 'databricks_workspace_api' configured for the workspace.
 -- Usage: SELECT * FROM {{CATALOG}}.{{SCHEMA}}.list_jobs()
@@ -18,7 +18,7 @@ RETURNS TABLE (
 )
 LANGUAGE SQL
 NOT DETERMINISTIC
-COMMENT 'Lists Databricks jobs in the workspace. Returns job ID, name, creator, and creation time. Use name_filter to search by job name.'
+COMMENT 'Lists Databricks jobs in the workspace via the Jobs API: job_id, job_name, creator, created_time. Parameters max_results (default 25) and optional name_filter substring. Not scoped to a single table. Automated Genify gather for a table does not call this tool (no table parameters in the schema); use for workspace-wide job discovery when explicitly needed.'
 RETURN
   SELECT
     CAST(jobs.value:job_id AS BIGINT) AS job_id,

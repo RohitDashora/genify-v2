@@ -1,75 +1,79 @@
-# What is Genify?
+# Genify — product overview
 
-**Scope:** Genify is a **demo and reference application**. It is meant for **learning, evaluation, and as a forkable starting point**—not as a supported production service. Operate it only in environments and with data you are comfortable treating as non-production.
+**Demo / reference** — Genify is a Databricks App that runs an **agent loop** over your Unity Catalog tables: **gather** context via MCP tools, **plan** with an LLM, **execute** template sections, stream progress over **SSE**, and persist results in **Lakebase**. The UI includes a persistent **demo banner**; treat security, cost, and governance as your responsibility when you fork or deploy beyond a lab.
 
-Genify is an **AI-assisted metadata generator** for Databricks. It helps teams produce richer **Unity Catalog table comments** and **Genie space**-style metadata from real workspace context—not from guesswork alone.
+## What you can do
+
+- **Browse** catalogs and schemas, **select** one or more tables, and **start a session** (Table comment or Genie Space template; **hands-off** or **interactive** mode).
+- **Watch** gather → plan → section execution with an optional **Activity trace** (verbose MCP/LLM diagnostics).
+- **Answer** targeted questions in **interactive** mode; the transcript stays primary; trace stays secondary.
+- **Save** completed metadata to the **Library** (YAML source, Markdown derived), and **edit** later.
+- **Own templates** under **Templates**: versioned YAML (`_meta` + `sections`), default version, upload/copy/save as new version.
+
+## Primary surfaces and routes
+
+Routes are defined in [`src/genify/frontend/src/App.jsx`](../src/genify/frontend/src/App.jsx).
+
+| Surface | Route(s) | Role |
+|---------|----------|------|
+| **Home** | `/` | Catalog/schema pickers, **Select Tables**, session launcher, **Your Sessions** |
+| **Session** | `/session/:id` | Transcript, plan/progress, optional YAML panel, Activity trace, interactive composer when paused |
+| **Library** | `/library`, `/library/:completedId` | Saved **completed_metadata** rows: search, type filters, sort; detail editor (YAML \| Markdown) |
+| **Templates** | `/templates`, `/templates/new`, `/templates/:templateId` | List templates, create/edit version, set default |
+
+Backend APIs are under `/api/*` (sessions, completed metadata, templates, catalog). See [architecture.md](architecture.md) for the full stack.
+
+## Typical flows
+
+1. **Home** — Pick catalog/schema → select table(s) → choose template type and mode → **Start**. Open an existing row from **Your Sessions** to resume.
+2. **Agent run** — SSE connects; MCP tools populate **context** once per session; the LLM **plans** sections; each section **executes** (hands-off runs through; interactive may **pause** with a `question`).
+3. **Complete** — Final YAML is merged and saved; **Open in Library** uses `completed_id` from the `complete` event when present.
+4. **Library** — Find a card, edit YAML, **Save** (server regenerates Markdown).
+5. **Templates** — Adjust template YAML for your org; activate/default as needed for new sessions.
+
+<a id="session-experience-mcp-trace-hands-off-vs-interactive"></a>
+
+## Session experience: MCP, trace, hands-off vs interactive
+
+- **Hands-off** — The agent fills sections from gathered context; unknowns may appear as `NEEDS_CLARIFICATION` in YAML. One continuous stream from gather through **Complete** (subject to network/proxy limits).
+- **Interactive** — The planner may use strategies that **pause** for your input. On a **question**, the client closes SSE while you compose an answer; you **POST** `/api/sessions/{id}/answer` and open a **new** stream to continue. The **Activity trace** shows MCP tool names, cache hints, and merge/LLM phases—use it for debugging, not as the main narrative (see [ADR-9](design-decisions.md#adr-9-transcript-first-session-ui)).
+- **MCP gather** — Runs when `context_cache` is empty; failures are stored and the run continues (**fail-open**). Details: [agentic-loop.md](agentic-loop.md), [mcp-and-agents.md](mcp-and-agents.md).
+
+Full UX principles and component map: **[ui-design.md](ui-design.md)**.
+
+<a id="screenshots"></a>
 
 ## Screenshots
 
-**Home** — Select catalog and schema, choose **Table comment** or **Genie space** template, hands-off vs interactive mode, then start a session; **Your sessions** shows status and shortcuts.
+Assets live under [`images/`](images/). Full inventory: **[images/README.md](images/README.md)**. Detailed UI walkthrough: **[ui-design.md](ui-design.md)**.
 
-![Genify Home](images/screenshot-home.png)
+**Home** — catalog, **Select Tables**, session launcher, **Your Sessions**.
 
-**Library** — Browse completed metadata (**Table comment** / **Genie**, including **Combined** multi-table rows), edit **YAML** or **Markdown**, save, revert, or copy.
+![Home — catalog, template type, sessions](images/screenshot-home.png)
 
-![Genify Library](images/screenshot-library.png)
+**Select Tables** — filter, bulk select, table type pill.
 
-### Session experience (MCP, trace, hands-off vs interactive)
+![Select Tables](images/screenshot-home-select-tables.png)
 
-**Hands-off — gather** — Progress shows “Gathering data context via MCP tools…” while **Activity trace** logs `profile_table`, `get_schema`, etc. **Generated YAML** warms up when the first sections stream.
+**Library** — saved metadata (YAML and Markdown).
 
-![Hands-off session — MCP gather phase](images/screenshot-session-hands-off-gather.png)
+![Library — YAML](images/screenshot-library.png)
 
-**Hands-off — plan + execute** — Transcript shows the **plan** (sections and strategies); trace includes `Using cached MCP context` and per-section **EXECUTE** lines; YAML fills on the right.
+![Library — Markdown](images/screenshot-library-markdown.png)
 
-![Hands-off session — plan and YAML streaming](images/screenshot-session-hands-off-execute.png)
+**Templates** — versioned template YAML.
 
-**Genie template — gather** — Same pattern for **Genie | Interactive** sessions: MCP tool calls appear in the trace during context gathering.
+![Templates](images/screenshot-templates.png)
 
-![Genie session — MCP gather in activity trace](images/screenshot-session-genie-mcp-gather.png)
+**Session (interactive complete, transcript-first)** — AGENT / YOU rounds and footer actions.
 
-**Interactive — waiting for user** — Status **Waiting For User**; **PLAN** may mix “Draft, then ask you” steps; **Your answer** composer with suggestions.
-
-![Interactive session — question and composer](images/screenshot-session-interactive-waiting-user.png)
-
-**Interactive — YAML alongside** — Split view: conversation + draft **Generated YAML** while the user refines answers.
-
-![Interactive session — YAML preview while composing](images/screenshot-session-interactive-yaml-compose.png)
-
-**Interactive — complete** — Threaded Q&A through **Step N**; **Show YAML** / copy / download when finished.
-
-![Interactive session — complete with transcript](images/screenshot-session-interactive-complete.png)
-
-## Core ideas
-
-- **Grounded in your data plane** — The agent calls **MCP tools** from the shipped **profiler** and **UC managed** servers—and you can **add your own MCP servers** via `app.yaml` (see [mcp-servers-and-tools.md](mcp-servers-and-tools.md)). Suggestions reflect profiles, lineage, UC comments, and related assets your identity can access.
-- **Structured output** — Sessions produce **YAML** aligned to a template (sections, fields, conventions). That YAML is the source of truth; the app can derive **Markdown** for humans or downstream systems.
-- **Save and revisit** — Completed runs land in the **Library** (Lakebase), including multi-table sessions where one **combined** artifact and optional **per-table** rows coexist. See [architecture.md §6 — Lakebase data model](architecture.md#6-lakebase-data-model-summary).
-
-## Bring your own template
-
-Templates define *what* metadata looks like (sections, nesting, placeholders). Genify stores them in Lakebase (`genify.templates`) and seeds initial versions from [`src/genify/seed_templates/`](../src/genify/seed_templates/) on first startup.
-
-You can:
-
-- Start from the shipped **table comment** or **Genie-oriented** seed templates.
-- **Version** templates over time: clone, edit, and activate via the templates API (see [extending.md — Templates and agent behavior](extending.md#templates-and-agent-behavior) and [`src/genify/README.md`](../src/genify/README.md) for layout).
-
-That lets different teams or use cases keep **different shapes** of metadata without forking the whole app—only the active template and prompts need to stay coherent.
-
-## From catalog to metadata
-
-1. On **Home**, browse the Unity Catalog hierarchy and **select one or more tables** for a session.
-2. Launch a session: the agent **gathers** tool context, **plans** how to fill the template, then **executes** section by section (hands-off or interactive clarifications).
-3. When complete, open **Library** to review YAML or Markdown, copy, or edit and save.
+![Interactive session complete](images/screenshot-session-interactive-complete-transcript.png)
 
 ## Where to read next
 
-| Topic | Doc |
-|--------|-----|
-| System diagram, agent loop, hands-off vs interactive, SSE, UI map | [architecture.md](architecture.md) |
-| Every MCP tool + BYO servers | [mcp-servers-and-tools.md](mcp-servers-and-tools.md) |
-| Managed vs custom MCP, `app.yaml`, troubleshooting | [mcp-and-agents.md](mcp-and-agents.md) |
-| LLM token limits and context caps | [llm-and-tokens.md](llm-and-tokens.md) |
-| UI principles (transcript-first, shell, Library) | [ui-design.md](ui-design.md) |
-| Deploy and security | [deploy.md](deploy.md), [security-auth.md](security-auth.md) |
+| Doc | Focus |
+|-----|--------|
+| [architecture.md](architecture.md) | System context, MCP topology, deploy, SSE, Lakebase |
+| [agentic-loop.md](agentic-loop.md) | `run_agent`, gather/plan/execute, cache rules |
+| [ui-design.md](ui-design.md) | Transcript-first UI, shell, screenshots |
+| [deploy.md](deploy.md) | `deploy.sh`, `deploy.config.yaml` |

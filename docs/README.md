@@ -31,7 +31,7 @@ This documentation describes a **reference LLM agent on Databricks Apps** that c
 | UC function definitions | [`uc_functions/`](../uc_functions/) |
 | Python tests | [`tests/`](../tests/) — [README](../tests/README.md), `./scripts/setup_test_venv.sh` |
 | Deploy orchestration | [`deploy.sh`](../deploy.sh), [`scripts/deploy/`](../scripts/deploy/) |
-| UI screenshots (README + docs) | [`images/`](images/) — Home, Library, session flows; refresh when UI changes materially |
+| UI screenshots (README + docs) | [`images/`](images/) — Home, Select Tables, **Templates**, Library, session flows; see [`images/README.md`](images/README.md); refresh when UI changes materially |
 | MCP tool reference | [mcp-servers-and-tools.md](mcp-servers-and-tools.md) |
 
 ## External references

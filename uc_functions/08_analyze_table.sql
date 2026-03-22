@@ -1,7 +1,7 @@
 -- Procedure: {{CATALOG}}.{{SCHEMA}}.analyze_table
 -- Type: STORED PROCEDURE
--- Description: Runs ANALYZE TABLE COMPUTE STATISTICS FOR ALL COLUMNS and returns
---              the computed statistics via DESCRIBE EXTENDED.
+-- Description: Procedure: ANALYZE TABLE ... COMPUTE STATISTICS then DESCRIBE EXTENDED;
+--              p_catalog/p_schema/p_table are three UC name parts; mutates table statistics.
 -- Note: This is a procedure (not a function) because ANALYZE TABLE is a DDL command.
 -- Usage: CALL {{CATALOG}}.{{SCHEMA}}.analyze_table('catalog', 'schema', 'table')
 
@@ -12,7 +12,7 @@ CREATE OR REPLACE PROCEDURE {{CATALOG}}.{{SCHEMA}}.analyze_table(
 )
 SQL SECURITY INVOKER
 LANGUAGE SQL
-COMMENT 'Runs ANALYZE TABLE COMPUTE STATISTICS FOR ALL COLUMNS and returns the computed statistics'
+COMMENT 'Stored procedure: runs ANALYZE TABLE ... COMPUTE STATISTICS FOR ALL COLUMNS then DESCRIBE EXTENDED for the same table. Parameters p_catalog, p_schema, and p_table are the three UC name parts. Mutates table statistics (DDL). Output shape depends on DESCRIBE EXTENDED; not a simple TABLE function.'
 BEGIN
   DECLARE full_table_name STRING;
   SET full_table_name = CONCAT(p_catalog, '.', p_schema, '.', p_table);

@@ -296,11 +296,14 @@ High-level UX goals—transcript-first session, responsive shell, progressive di
 
 | Area | Components (under `src/genify/frontend/src/`) | Notes |
 |------|-----------------------------------------------|--------|
-| **Shell** | `App.jsx`, `layout/AppShell.jsx`, `layout/AppSidebar.jsx`, `ScrollToTop.jsx`, `PageSkeleton.jsx`, `NotFound.jsx` | **Desktop:** persistent left sidebar (~240px) — **Home**, **Library** — plus full-width main (`flex-1 min-w-0`). **&lt; md:** hamburger + slide-over drawer + backdrop; drawer closes on route change. No `max-w-6xl` cap on workspace. |
+| **Shell** | `App.jsx`, `layout/AppShell.jsx`, `layout/AppSidebar.jsx`, `ScrollToTop.jsx`, `PageSkeleton.jsx`, `NotFound.jsx` | **Desktop:** persistent left sidebar (~240px) — **Home**, **Library**, **Templates** — plus full-width main (`flex-1 min-w-0`). **&lt; md:** hamburger + slide-over drawer + backdrop; drawer closes on route change. No `max-w-6xl` cap on workspace. |
 | **Home** | `Home.jsx`, `CatalogBrowser.jsx`, `SessionLauncher.jsx`, `SessionList.jsx` | Catalog via TanStack Query; **Select Tables** list: comment `line-clamp` preview + full text on hover; compact table-type pill; table filter + select visible/clear; launcher; session list filters, relative `updated_at`, `ConfirmDialog` for delete. **`HelpHint`** on section titles where useful. |
-| **Library** | `library/LibraryLayout.jsx`, `library/LibraryList.jsx`, `library/LibraryDetail.jsx` | **`/library`** master–detail on `lg+` (card list + outlet). **`/library/:completedId`** detail: YAML \| Markdown toggle, CodeMirror edit, validate (`js-yaml`), Save / Revert, Copy YAML / Copy Markdown. Cards show `table_fqn` or **Combined** for multi-table sessions. Mobile: stacked list ↔ detail with back. |
+| **Library** | `library/LibraryLayout.jsx`, `library/LibraryList.jsx`, `library/LibraryDetail.jsx` | **`/library`** master–detail on `lg+` (card list + outlet). **`/library/:completedId`** detail: YAML \| Markdown toggle, CodeMirror edit, validate (`js-yaml`), Save / Revert, Copy YAML / Copy Markdown. List: search by name, **Table comment** / **Genie** filters, sort by updated. Cards show `table_fqn` or **Combined** for multi-table sessions. Mobile: stacked list ↔ detail with back. |
+| **Templates** | `templates/TemplatesLayout.jsx`, `templates/TemplateList.jsx`, `templates/TemplateDetail.jsx` | **`/templates`** list + outlet; **`/templates/new`** create; **`/templates/:templateId`** edit. Search, type filters, version sort; **Default** badge; YAML editor with Upload, Copy YAML, Save, Revert, **Set as default**, **Save as new version**. |
 | **Session** | `SessionView.jsx`, `SessionPageHeader.jsx`, `SessionTranscript.jsx`, `QuestionComposer.jsx`, `YamlPanel.jsx`, `TracePanel.jsx`, `TranscriptMarkdown.jsx` | Status pill; markdown transcript (dimmed while agent working); **`QuestionComposer`**: full question in transcript only; suggested reply read-only panel + Use/Send suggestion + textarea (draft preserved on same-pause `question` replay; **EventSource** closed after `question`); YAML in CodeMirror; trace panel; stream warning as header **WifiOff** chip + debounced `onerror` (suppressed while `question` active); jump-to-latest when scrolled up. **Back** in header **hidden on `md+`** (sidebar provides nav). **`complete` SSE** may include **`completed_id`** → **Open in Library** + correct **`PUT /completed/{id}`** on YAML save (via ref or `GET /sessions/{id}/completed`). |
 | **Shared** | `HelpHint.jsx`, `utils/tableRef.js` | Contextual **?** tooltips (hover + focus-within). Shared **table label** formatting for session + library cards. |
+
+Screenshots and UX intent: **[ui-design.md](ui-design.md)**, **[product-overview.md](product-overview.md#screenshots)**.
 
 Shared API: [`api.js`](../src/genify/frontend/src/api.js) (`fetchJSON`, `connectSSE` with `onOpen` / `onStreamError`).
 
@@ -311,7 +314,8 @@ Shared API: [`api.js`](../src/genify/frontend/src/api.js) (`fetchJSON`, `connect
 | `status` | Sparse phase updates (loading, gathering_context, planning, finalizing). |
 | `thinking` | Sparse section-level hint (e.g. partial fill); optional subtitle in UI. |
 | `plan` | Plan payload (steps, counts); UI humanizes strategies. |
-| `yaml_chunk` | Incremental YAML for the preview panel. |
+| `yaml_chunk` | Incremental YAML for streaming preview while the LLM generates a section. |
+| `full_yaml` | Authoritative merged YAML after validation (`generated_yaml` + optional partial preview when `is_partial` is true). Client should prefer this over accumulating `yaml_chunk`. |
 | `section_complete` | Step finished. |
 | `question` | Interactive pause; client closes SSE after handling, POSTs answer, then opens a **new** SSE stream to resume. |
 | `complete` | Final YAML + session id; optional **`completed_id`** (UUID of the primary `completed_metadata` row — combined row for multi-table, or the single row for one table). Client uses it for Library deep link and for saving YAML edits without guessing by `template_type`. |

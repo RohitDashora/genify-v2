@@ -1,7 +1,6 @@
 -- Function: {{CATALOG}}.{{SCHEMA}}.get_forward_lineage
 -- Type: TABLE function
--- Description: Returns forward (downstream) lineage for a given table with job/pipeline details.
---              Shows all target tables that the specified table feeds data INTO.
+-- Description: Downstream lineage; parameter table_full_name is one FQN string (Genify passes session table).
 -- Usage: SELECT * FROM {{CATALOG}}.{{SCHEMA}}.get_forward_lineage('catalog.schema.table')
 
 CREATE OR REPLACE FUNCTION {{CATALOG}}.{{SCHEMA}}.get_forward_lineage(
@@ -24,7 +23,7 @@ RETURNS TABLE (
   last_event_time TIMESTAMP
 )
 LANGUAGE SQL
-COMMENT 'Returns forward (downstream) lineage for a given table with job/pipeline details. Shows all target tables that the specified table feeds data INTO. Usage: SELECT * FROM {{CATALOG}}.{{SCHEMA}}.get_forward_lineage("catalog.schema.table")'
+COMMENT 'Downstream lineage: targets that consume data from the specified table. Parameter table_full_name is one string catalog.schema.table (Genify passes the session table FQN). Returns source and target tables, types, lineage entity metadata, and related job, pipeline, notebook, or dashboard fields when available. Empty result if no downstream lineage is recorded.'
 RETURN
   SELECT
     l.source_table_full_name AS source_table,

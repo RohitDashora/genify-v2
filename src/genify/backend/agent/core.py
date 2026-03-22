@@ -12,9 +12,10 @@ from typing import Any
 import yaml
 from psycopg.rows import dict_row
 
-from backend.agent.executor import execute_step, incorporate_answer
+from backend.agent.executor import execute_step, incorporate_answer, merge_section_output
+from backend.agent.yaml_merge import load_yaml_document
 from backend.agent.planner import generate_plan
-from backend.agent.streamer import EventStreamer
+from backend.agent.streamer import TRACE_DETAIL_MAX, EventStreamer
 from backend.config import get_config
 from backend.db import SCHEMA
 from backend.llm.client import get_main_llm_client
@@ -116,8 +117,16 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
                     out: dict[str, Any] = {}
                     async for evt in _iter_gather_context_events(session, streamer, out):
                         yield evt
-                    context = out.get("context") or {}
-                    _save_context_cache(pool, session_id, context)
+                    gathered = out.get("context")
+                    context = gathered if isinstance(gathered, dict) else {}
+                    if context:
+                        _save_context_cache(pool, session_id, context)
+                    else:
+                        logger.info(
+                            "MCP gather did not persist context_cache (empty or incomplete) "
+                            "for session %s",
+                            session_id,
+                        )
                 else:
                     logger.info(
                         "MCP gather skipped for session %s — context populated while waiting (parallel stream)",
@@ -181,7 +190,6 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
 
         # 5. Execute plan from current_step
         current_step = session.get("current_step", 0)
-        generated_yaml = session.get("generated_yaml", "")
         llm = get_main_llm_client()
 
         # Reconnect / refresh: re-emit stored question without re-running execute_step (no duplicate LLM).
@@ -205,9 +213,15 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
 
         _update_session_status(pool, session_id, "executing")
 
+        generated_yaml = session.get("generated_yaml", "") or ""
+        cfg_agent = get_config()
+
         for i in range(current_step, total_steps):
             step = plan[i]
             section_key = step["section_key"]
+            section_name = _section_display_name(template, section_key)
+            session = _load_session(pool, session_id) or session
+            pending_section_yaml = session.get("pending_section_yaml") or ""
 
             # If we're resuming after a user answer, incorporate it
             if status == "waiting_for_user" and i == current_step and conversation:
@@ -221,20 +235,41 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
                     result = await incorporate_answer(
                         step=step,
                         answer=last_msg["content"],
-                        partial_yaml=generated_yaml,
                         context=context,
                         template=template,
                         prior_yaml=generated_yaml,
                         llm=llm,
                         streamer=streamer,
                         template_type=session["template_type"],
+                        pending_section_yaml=pending_section_yaml,
                     )
                     for evt in result["events"]:
                         yield evt
-                    if result["section_yaml"]:
-                        generated_yaml += f"\n{result['section_yaml']}"
-                    _save_step_progress(pool, session_id, i + 1, generated_yaml, conversation)
+                    frag = result.get("section_yaml") or ""
+                    merged, merge_events, _skipped = await merge_section_output(
+                        prior_yaml=generated_yaml,
+                        section_key=section_key,
+                        fragment_yaml=frag,
+                        template=template,
+                        llm=llm,
+                        streamer=streamer,
+                        section_name=section_name,
+                    )
+                    for evt in merge_events:
+                        yield evt
+                    generated_yaml = merged
+                    _maybe_write_generated_json(pool, session_id, generated_yaml, cfg_agent)
+                    _save_step_progress(
+                        pool,
+                        session_id,
+                        i + 1,
+                        generated_yaml,
+                        conversation,
+                        pending_section_yaml="",
+                    )
+                    yield streamer.full_yaml(generated_yaml, is_partial=False)
                     yield streamer.section_complete(section_key, i + 1, total_steps)
+                    status = "executing"
                     continue
 
             # Normal execution
@@ -253,21 +288,20 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
                 yield evt
 
             if result["needs_user_input"]:
-                # Pause for user input
                 q_data = result.get("question_data", {})
                 conversation.append({
                     "role": "assistant",
                     "content": q_data.get("question", ""),
                 })
-                partial = generated_yaml
-                if result["section_yaml"]:
-                    partial += f"\n{result['section_yaml']}"
+                draft = result.get("section_yaml") or ""
+                preview = _preview_yaml_with_pending(generated_yaml, draft)
                 _save_waiting_state(
                     pool,
                     session_id,
                     i,
-                    partial,
+                    generated_yaml,
                     conversation,
+                    pending_section_yaml=draft,
                     pending_question={
                         "section": section_key,
                         "field": q_data.get("fields", [section_key])[0]
@@ -277,12 +311,47 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
                         "suggested_answer": q_data.get("suggested_answer", ""),
                     },
                 )
+                yield streamer.full_yaml(preview, is_partial=True)
                 return
 
-            if result["section_yaml"]:
-                generated_yaml += f"\n{result['section_yaml']}"
+            strategy = step.get("strategy", "auto_fill")
+            frag = result.get("section_yaml") or ""
+            if strategy == "skip" or not frag.strip():
+                _save_step_progress(
+                    pool,
+                    session_id,
+                    i + 1,
+                    generated_yaml,
+                    conversation,
+                    pending_section_yaml="",
+                )
+                _maybe_write_generated_json(pool, session_id, generated_yaml, cfg_agent)
+                yield streamer.full_yaml(generated_yaml, is_partial=False)
+                yield streamer.section_complete(section_key, i + 1, total_steps)
+                continue
 
-            _save_step_progress(pool, session_id, i + 1, generated_yaml, conversation)
+            merged, merge_events, _skipped = await merge_section_output(
+                prior_yaml=generated_yaml,
+                section_key=section_key,
+                fragment_yaml=frag,
+                template=template,
+                llm=llm,
+                streamer=streamer,
+                section_name=section_name,
+            )
+            for evt in merge_events:
+                yield evt
+            generated_yaml = merged
+            _maybe_write_generated_json(pool, session_id, generated_yaml, cfg_agent)
+            _save_step_progress(
+                pool,
+                session_id,
+                i + 1,
+                generated_yaml,
+                conversation,
+                pending_section_yaml="",
+            )
+            yield streamer.full_yaml(generated_yaml, is_partial=False)
             yield streamer.section_complete(section_key, i + 1, total_steps)
 
         # 6. Finalize
@@ -333,6 +402,9 @@ def _save_context_cache(pool, session_id: str, context: Any):
             type(context).__name__,
         )
         return
+    if not context:
+        logger.debug("context_cache skip save: empty dict")
+        return
     serializable = {}
     for k, v in context.items():
         try:
@@ -366,6 +438,37 @@ def _normalize_context_cache(raw: Any) -> dict:
     return raw
 
 
+def _section_display_name(template: dict, section_key: str) -> str:
+    for s in template.get("sections", []):
+        if s.get("key") == section_key:
+            return str(s.get("name", section_key))
+    return section_key
+
+
+def _preview_yaml_with_pending(committed: str, pending: str) -> str:
+    c = (committed or "").strip()
+    p = (pending or "").strip()
+    if not p:
+        return committed or ""
+    if not c:
+        return p
+    return c + "\n" + p
+
+
+def _maybe_write_generated_json(pool, session_id: str, yaml_str: str, cfg) -> None:
+    if not getattr(cfg, "yaml_merge", None) or not cfg.yaml_merge.canonical_json_enabled:
+        return
+    doc = load_yaml_document(yaml_str)
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE {SCHEMA}.sessions SET generated_json = %s::jsonb, updated_at = now() "
+                f"WHERE id = %s",
+                (json.dumps(doc), session_id),
+            )
+        conn.commit()
+
+
 def _should_emit_session_resumed(session: dict) -> bool:
     st = session.get("status") or ""
     step = session.get("current_step") or 0
@@ -391,16 +494,24 @@ def _save_plan(pool, session_id: str, plan: list[dict]):
         conn.commit()
 
 
-def _save_step_progress(pool, session_id: str, step: int, yaml_content: str, conversation: list):
+def _save_step_progress(
+    pool,
+    session_id: str,
+    step: int,
+    yaml_content: str,
+    conversation: list,
+    *,
+    pending_section_yaml: str = "",
+):
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"UPDATE {SCHEMA}.sessions "
                 f"SET current_step = %s, generated_yaml = %s, "
                 f"conversation = %s, status = 'executing', "
-                f"pending_question = NULL, updated_at = now() "
+                f"pending_question = NULL, pending_section_yaml = %s, updated_at = now() "
                 f"WHERE id = %s",
-                (step, yaml_content, json.dumps(conversation), session_id),
+                (step, yaml_content, json.dumps(conversation), pending_section_yaml, session_id),
             )
         conn.commit()
 
@@ -412,6 +523,8 @@ def _save_waiting_state(
     yaml_content: str,
     conversation: list,
     pending_question: dict | None = None,
+    *,
+    pending_section_yaml: str = "",
 ):
     with pool.connection() as conn:
         with conn.cursor() as cur:
@@ -419,13 +532,14 @@ def _save_waiting_state(
                 f"UPDATE {SCHEMA}.sessions "
                 f"SET current_step = %s, generated_yaml = %s, "
                 f"conversation = %s, status = 'waiting_for_user', "
-                f"pending_question = %s, updated_at = now() "
+                f"pending_question = %s, pending_section_yaml = %s, updated_at = now() "
                 f"WHERE id = %s",
                 (
                     step,
                     yaml_content,
                     json.dumps(conversation),
                     json.dumps(pending_question) if pending_question else None,
+                    pending_section_yaml,
                     session_id,
                 ),
             )
@@ -475,6 +589,7 @@ def _save_completed(pool, session: dict, yaml_content: str, markdown: str) -> st
         }]
 
     multi = len(tables) > 1
+    tpl_ver = session.get("template_version")
 
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
@@ -482,13 +597,14 @@ def _save_completed(pool, session: dict, yaml_content: str, markdown: str) -> st
                 # Combined row
                 cur.execute(
                     f"INSERT INTO {SCHEMA}.completed_metadata "
-                    f"(session_id, user_email, template_type, table_ref, "
+                    f"(session_id, user_email, template_type, template_version, table_ref, "
                     f" yaml_content, markdown_content, table_fqn) "
-                    f"VALUES (%s, %s, %s, %s, %s, %s, NULL) RETURNING id",
+                    f"VALUES (%s, %s, %s, %s, %s, %s, %s, NULL) RETURNING id",
                     (
                         str(session["id"]),
                         session["user_email"],
                         session["template_type"],
+                        tpl_ver,
                         json.dumps(table_ref),
                         yaml_content,
                         markdown,
@@ -504,13 +620,14 @@ def _save_completed(pool, session: dict, yaml_content: str, markdown: str) -> st
                     tbl_md = yaml_to_markdown(tbl_yaml, session["template_type"])
                     cur.execute(
                         f"INSERT INTO {SCHEMA}.completed_metadata "
-                        f"(session_id, user_email, template_type, table_ref, "
+                        f"(session_id, user_email, template_type, template_version, table_ref, "
                         f" yaml_content, markdown_content, table_fqn) "
-                        f"VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                         (
                             str(session["id"]),
                             session["user_email"],
                             session["template_type"],
+                            tpl_ver,
                             json.dumps(table_ref),
                             tbl_yaml,
                             tbl_md,
@@ -525,13 +642,14 @@ def _save_completed(pool, session: dict, yaml_content: str, markdown: str) -> st
                     fqn = f"{t.get('catalog', '')}.{t.get('schema', '')}.{t.get('table', '')}"
                 cur.execute(
                     f"INSERT INTO {SCHEMA}.completed_metadata "
-                    f"(session_id, user_email, template_type, table_ref, "
+                    f"(session_id, user_email, template_type, template_version, table_ref, "
                     f" yaml_content, markdown_content, table_fqn) "
-                    f"VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                     (
                         str(session["id"]),
                         session["user_email"],
                         session["template_type"],
+                        tpl_ver,
                         json.dumps(table_ref),
                         yaml_content,
                         markdown,
@@ -633,7 +751,6 @@ async def _iter_gather_context_events(
         await asyncio.to_thread(registry.connect_all)
     except Exception as e:
         logger.warning(f"MCP registry connect failed: {e}")
-        out["context"] = {}
         yield streamer.trace(
             "system",
             f"MCP connect failed: {e}",
@@ -693,16 +810,22 @@ async def _iter_gather_context_events(
                 )
                 tbl_context[tool_name] = result
                 preview = str(result) if result is not None else ""
+                if isinstance(result, dict) and result.get("_mcp_error"):
+                    preview = f"[error] {result.get('detail', '')}"
+                detail = preview[:TRACE_DETAIL_MAX] + (
+                    "…" if len(preview) > TRACE_DETAIL_MAX else ""
+                )
                 yield streamer.trace(
                     "tool",
                     f"{tool_name} returned",
                     tool=tool_name,
-                    detail=preview,
+                    detail=detail,
                     phase="gather",
                     table_fqn=tfqn,
                 )
             except Exception as e:
                 logger.warning(f"MCP tool {tool_name} failed for {tbl_key}: {e}")
+                tbl_context[tool_name] = {"_mcp_error": True, "detail": str(e)}
                 yield streamer.trace(
                     "system",
                     f"Tool {tool_name} failed: {e}",

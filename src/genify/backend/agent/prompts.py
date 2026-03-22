@@ -31,6 +31,8 @@ MCP tools catalog (exact tool names — use these strings in data_sources, not g
 
 Tools with callable: false were not invoked via MCP for this session; there is no gathered payload for them.
 
+Some tools may have failed or returned errors (see "[Tool failed]" or "_mcp_error" in the context). Plan using whatever data is available — use "skip" or "NEEDS_CLARIFICATION" in hands_off when a section has no usable data.
+
 Context gathered (MCP results per table key):
 {context_summary}
 
@@ -118,6 +120,9 @@ You are generating Genie space metadata — SQL expressions, query instructions,
 and example queries that will be used by Databricks Genie to answer natural \
 language questions.
 
+For each section you output exactly ONE top-level YAML key, and that key MUST equal \
+the current section's section_key (e.g. "example_queries:" for the example_queries section).
+
 Key rules for Genie metadata:
 - SQL expressions must be syntactically valid Databricks SQL
 - Query instructions should be specific about which columns and filters to use
@@ -132,9 +137,21 @@ lean on them heavily — they're the ground truth from domain experts.
 YAML_FORMAT_INSTRUCTIONS = """
 Output format rules:
 - Valid YAML only — no markdown fences, no trailing explanation
+- Exactly ONE top-level key in your output, and it MUST match the section_key for this step
 - Use | for multi-line strings
 - Quote strings containing special YAML characters
 - Use consistent 2-space indentation
 - Lists use - prefix
 - Empty values use empty string "" not null
+"""
+
+MERGE_CORRECTION_PROMPT = """The YAML for section "{section_key}" ({section_name}) failed merge validation.
+
+Error: {error}
+
+Fix the output so it is valid YAML with exactly ONE top-level key: {section_key}
+The value must fit the template shape for this section.
+
+Previous attempt:
+{attempt}
 """

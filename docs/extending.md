@@ -56,6 +56,12 @@ Optional: add hints, hide specific tools from gather, or inject planner-only too
 3. Update [`SessionView.jsx`](../src/genify/frontend/src/components/SessionView.jsx) handlers—prefer **transcript** for user-visible text, **`trace`** only for diagnostics. For **`question`**, keep behavior aligned with [architecture.md](architecture.md#client-lifecycle-browser): close SSE after handling, preserve composer draft on same-pause replay.
 4. Document the event in [architecture.md](architecture.md#sse-event-types-session-stream).
 
+**Existing events:** `full_yaml` replaces the YAML panel with the server’s merged document; `yaml_chunk` remains for streaming typing effect.
+
+## Retry a section
+
+`POST /api/sessions/{id}/retry-section` rolls back the last merged section (or clears a pending draft when `waiting_for_user`) so the next SSE run re-executes that step. Requires session ownership; returns **409** when the session is not in a retryable state.
+
 ## Transcript hydration
 
 If new fields on [`sessions`](../src/genify/backend/models.py) should appear when the user **opens** a session (before SSE), extend `GET /api/sessions/{id}` and map them in `SessionView` hydration logic alongside `conversation`.
