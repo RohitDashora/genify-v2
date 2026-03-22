@@ -1,5 +1,5 @@
 # Copy to deploy.config.yaml and fill in. Profile is passed on the command line:
-#   ./deploy.sh --profile fe-vm-v2 --config deploy.config.yaml
+#   ./deploy.sh --profile <your-databricks-cli-profile> --config deploy.config.yaml
 #
 # version: 1
 

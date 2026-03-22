@@ -128,6 +128,7 @@ Details: **[docs/deploy.md](docs/deploy.md)**.
 | [docs/security-auth.md](docs/security-auth.md) | SP, bindings, secrets |
 | [docs/extending.md](docs/extending.md) | Add servers, UC SQL, fork |
 | [docs/design-decisions.md](docs/design-decisions.md) | ADR-style rationale |
+| [docs/public-repo-checklist.md](docs/public-repo-checklist.md) | Secrets, git history, Cursor assets — before making the repo public |
 
 ---
 

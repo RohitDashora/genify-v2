@@ -11,6 +11,7 @@ From the **repository root**:
 ```bash
 ./scripts/setup_test_venv.sh
 ./scripts/run_tests.sh
+./scripts/check_repo_hygiene.sh   # optional: ensure no secrets paths are git-tracked
 ```
 
 - Creates **`.venv-test/`** (gitignored) with `tests/requirements-test.txt` → Genify [`requirements.txt`](../src/genify/requirements.txt) **+ pytest**.

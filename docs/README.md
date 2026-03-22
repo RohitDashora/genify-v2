@@ -41,4 +41,4 @@ This documentation describes a **reference LLM agent on Databricks Apps** that c
 
 ## Contributing and security
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) in the repo root. Security disclosures: [SECURITY.md](../SECURITY.md). License: [LICENSE](../LICENSE).
+See [CONTRIBUTING.md](../CONTRIBUTING.md) in the repo root. Security disclosures: [SECURITY.md](../SECURITY.md). License: [LICENSE](../LICENSE). Before making the repository public: [public-repo-checklist.md](public-repo-checklist.md) and `./scripts/check_repo_hygiene.sh`.

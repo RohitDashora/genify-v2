@@ -7,7 +7,7 @@ then uses DatabricksMCPClient.list_tools().
 Usage:
   python scripts/mcp_discover_profiler_tools.py
 
-  python scripts/mcp_discover_profiler_tools.py --profile fe-vm-v2 --app-name genify-mcp-profiler
+  python scripts/mcp_discover_profiler_tools.py --profile DEFAULT --app-name genify-mcp-profiler
 
   python scripts/mcp_discover_profiler_tools.py --server-url https://xxxx.cloud.databricks.com/.../mcp
 
@@ -24,7 +24,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Discover MCP tools on the profiler app")
     parser.add_argument(
         "--profile",
-        default="fe-vm-v2",
+        default="DEFAULT",
         help="Databricks CLI config profile (passed to WorkspaceClient)",
     )
     parser.add_argument(

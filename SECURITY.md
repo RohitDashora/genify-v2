@@ -14,3 +14,7 @@ Include steps to reproduce, affected versions or commits, and impact where possi
 This project is a **demo / reference application** for Databricks Apps, MCP, and Lakebase. It is **not** positioned as a production-hardened product; threat modeling, patching cadence, and operational security are **out of scope** for this repo as shipped.
 
 Security in any deployment still depends on your **workspace configuration** (service principals, UC grants, secrets, network). See [docs/security-auth.md](docs/security-auth.md).
+
+## Open-sourcing and secrets
+
+Before publishing or forking publicly, use **[docs/public-repo-checklist.md](docs/public-repo-checklist.md)** and run **`./scripts/check_repo_hygiene.sh`** locally to ensure environment-specific files (for example `deploy.config.yaml`) are **not** tracked by git.

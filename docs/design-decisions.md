@@ -2,6 +2,8 @@
 
 Short rationale for major choices in this reference repo. For full diagrams see [architecture.md](architecture.md).
 
+**Note:** Numbers are **stable IDs**, not document order—sections are grouped by theme (e.g. **ADR-8** appears after session-interaction ADRs because it documents `context_cache` shape).
+
 ---
 
 ## ADR-1: Lakebase for session and template state
@@ -64,7 +66,7 @@ Short rationale for major choices in this reference repo. For full diagrams see 
 
 ---
 
-## ADR-5: SDK PATCH for Genify app resources
+## ADR-12: SDK PATCH for Genify app resources
 
 **Decision:** Update Genify’s **warehouse, serving endpoints, and Lakebase** bindings via **`WorkspaceClient.api_client.do("PATCH", ...)`** in [`scripts/deploy/genify_app_update_resources.py`](../scripts/deploy/genify_app_update_resources.py).
 
@@ -131,6 +133,96 @@ Short rationale for major choices in this reference repo. For full diagrams see 
 **Rationale:** The planner and executor expect metadata keys (`_`) and FQN keys; flattening broke saves when metadata was the first key. The manifest gives the planning LLM exact tool names and schemas without maintaining a duplicate registry in YAML.
 
 **Tradeoff:** Slightly more nesting in prompts; summarization already stringifies per FQN key.
+
+---
+
+## ADR-13: Engineer-facing documentation and screenshot inventory
+
+**Decision:** Ship a dedicated **[product-overview.md](product-overview.md)** (product story, routes, flows, `#screenshots`), keep **[ui-design.md](ui-design.md)** as the detailed UI + figure walkthrough, and maintain **[images/README.md](images/README.md)** as the inventory of canonical `screenshot-*.png` filenames (replace in place when the UI changes). **[architecture.md](architecture.md)** §5 lists **Home**, **Library**, and **Templates** as primary shell destinations, aligned with [`App.jsx`](../src/genify/frontend/src/App.jsx).
+
+**Rationale:** Forking teams and architects need a single entry for “what is this app?” without reading code; stable image names keep README and docs links from rotting when PNGs are refreshed.
+
+**Tradeoff:** Screenshots drift from the app unless contributors update assets and alt text together (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
+
+---
+
+## ADR-14: Execution uses cached MCP context only (plan `data_sources` is advisory)
+
+**Decision:** **`execute_step`** does **not** call MCP tools for section work. It reads the **`context_cache`** blob populated during **gather**. Optional **`data_sources`** strings on plan steps are **hints for the planner LLM** only; they are **not** a runtime schedule of MCP calls.
+
+**Rationale:** One gather pass per session keeps latency and cost predictable; the executor stays a pure LLM+merge loop over known context.
+
+**Tradeoff:** Changing which tools feed a section requires changing gather policy / tool manifest, not the plan JSON alone. See [agentic-loop.md](agentic-loop.md) and [architecture.md](architecture.md).
+
+---
+
+## ADR-15: User identity from Databricks Apps proxy headers
+
+**Decision:** [`get_current_user`](../src/genify/backend/middleware.py) reads **`X-Forwarded-Email`** or **`X-Forwarded-User`** (Databricks Apps / gateway). If absent, falls back to **`dev@local`** for local development. Session and completed rows are scoped by this **`user_email`**.
+
+**Rationale:** No custom login in the reference app; reuse the workspace identity the App already provides.
+
+**Tradeoff:** Not a full authz model—any caller who can reach the API with a forged header in a misconfigured deployment could impersonate; production hardening is out of scope for this demo.
+
+---
+
+## ADR-16: MCP gather serialized per session (in-process)
+
+**Decision:** An **`asyncio.Lock`** per `session_id` serializes **gather** so concurrent **`GET /api/sessions/{id}/stream`** connections do not each run a full tool storm; followers wait and reload **`context_cache`** from Lakebase.
+
+**Rationale:** Protects MCP endpoints and warehouse load during reconnects and duplicate tabs.
+
+**Tradeoff:** **In-process only** — multiple **Uvicorn workers** do not share the lock; use **one worker** or add a DB-level advisory lock if you scale workers. See comment in [`core.py`](../src/genify/backend/agent/core.py).
+
+---
+
+## ADR-17: `mcp_tool_overrides` in `app.yaml`
+
+**Decision:** Optional **`config.mcp_tool_overrides`**: **`hidden_tools`** (omit from manifest/auto-gather), **`tool_hints`**, **`extra_tools`** (planner-only rows), loaded in [`config.py`](../src/genify/backend/config.py) and applied in [`tool_manifest.py`](../src/genify/backend/mcp/tool_manifest.py).
+
+**Rationale:** Operators can disable broken or irrelevant UC tools (e.g. procedures not exposed as invokable MCP tools) **without** code deploys.
+
+**Tradeoff:** Hidden tools are easy to forget; document changes in team runbooks when UC functions change.
+
+---
+
+## ADR-18: Multi-table `completed_metadata` rows
+
+**Decision:** On complete, **`_save_completed`** writes **one combined** row (`table_fqn` **NULL**) plus **one row per table** (`table_fqn` set) for multi-table sessions, splitting YAML via **`_split_yaml_per_table`**. Single-table sessions write **one** row with `table_fqn` set.
+
+**Rationale:** Library cards can target a single table; combined YAML remains the full merged document for download and Genie-style artifacts.
+
+**Tradeoff:** More rows to manage; **`complete` SSE `completed_id`** points at the primary row the client should open.
+
+---
+
+## ADR-19: Configurable context truncation and optional `generated_json`
+
+**Decision:** **`config.context_truncation`** sets **character** caps for MCP blobs embedded in prompts (planning vs execute vs interactive paths), independent of **`llm.max_prompt_tokens`** (tiktoken **trim_history**). Optional **`yaml_merge.canonical_json_enabled`** dual-writes parsed merged YAML to **`sessions.generated_json`** (JSONB) for consumers that prefer JSON.
+
+**Rationale:** Bounded prompts even when MCP returns large payloads; optional JSON avoids a second YAML parse downstream.
+
+**Tradeoff:** Character limits can truncate nuance; **`generated_json`** doubles storage when enabled.
+
+---
+
+## ADR-20: Retry last section (`POST /api/sessions/{id}/retry-section`)
+
+**Decision:** A dedicated endpoint **rolls back** the last merged section (or clears a pending draft when `waiting_for_user`) so the next **`run_agent`** run **re-executes** that step. Returns **409** when the session is not in a retryable state.
+
+**Rationale:** Users can recover from a bad section without starting a new session.
+
+**Tradeoff:** Server must keep merge/remove semantics consistent with [`yaml_merge.remove_section_key`](../src/genify/backend/agent/yaml_merge.py).
+
+---
+
+## ADR-21: Permissive CORS for the demo SPA
+
+**Decision:** [`main.py`](../src/genify/backend/main.py) enables **`CORSMiddleware`** with **`allow_origins=["*"]`** for the reference app (local Vite + Databricks App hosting).
+
+**Rationale:** Minimizes CORS friction in workshops and forked deployments.
+
+**Tradeoff:** **Not** appropriate for strict production; restrict origins when you harden.
 
 ---
 

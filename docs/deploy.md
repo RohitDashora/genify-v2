@@ -69,7 +69,7 @@ cp deploy.config.example.yaml deploy.config.yaml
 Pass **profile on the command line** (not in the YAML):
 
 ```bash
-./deploy.sh --profile fe-vm-v2 --config deploy.config.yaml
+./deploy.sh --profile <your-databricks-cli-profile> --config deploy.config.yaml
 ```
 
 ## Troubleshooting

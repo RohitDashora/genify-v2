@@ -22,6 +22,11 @@ Thanks for helping improve this **demo / reference** repository. Changes should 
 
 **Python 3.12** (or 3.11) is recommended; **3.14** may fail to install some wheels (e.g. `pyarrow` / ML stack).
 
+### Repository hygiene (before going public)
+
+- Read **[docs/public-repo-checklist.md](docs/public-repo-checklist.md)** — secrets, `.gitignore`, Cursor assets, git history.
+- Run **`./scripts/check_repo_hygiene.sh`** — must exit `0` (fails if `deploy.config.yaml`, `.env`, or similar are tracked).
+
 ### Tests (dedicated venv)
 
 ```bash

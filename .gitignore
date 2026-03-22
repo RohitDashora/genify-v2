@@ -87,5 +87,6 @@ __pypackages__/
 # Mypy daemon
 .dmypy.json
 
-# Cursor IDE
+# Cursor IDE — entire directory ignored; shared rules/skills are not in git unless you
+# replace this with selective ignores — see docs/public-repo-checklist.md
 .cursor/

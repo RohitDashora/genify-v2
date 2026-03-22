@@ -9,7 +9,7 @@ Defaults match src/genify/app.yaml (uc-functions server: agent_spark / custom_ag
 Usage:
   python scripts/mcp_discover_uc_tools.py
 
-  python scripts/mcp_discover_uc_tools.py --profile fe-vm-v2 --catalog agent_spark --schema custom_agent
+  python scripts/mcp_discover_uc_tools.py --profile DEFAULT --catalog agent_spark --schema custom_agent
 
   python scripts/mcp_discover_uc_tools.py --server-url https://xxx.cloud.databricks.com/api/2.0/mcp/functions/cat/sch
 
@@ -40,8 +40,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Discover MCP tools on UC managed functions endpoint")
     parser.add_argument(
         "--profile",
-        default="fe-vm-v2",
-        help="Databricks CLI config profile",
+        default="DEFAULT",
+        help="Databricks CLI config profile (~/.databrickscfg section name)",
     )
     parser.add_argument(
         "--catalog",

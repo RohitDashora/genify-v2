@@ -1,4 +1,7 @@
-"""Plan step execution — calls MCP tools, generates YAML via LLM, streams events."""
+"""Plan step execution — generates YAML from cached MCP context via LLM, merges, streams events.
+
+Does not call MCP; context comes from gather (`context_cache`). See docs/design-decisions.md ADR-14.
+"""
 import asyncio
 import json
 import logging
