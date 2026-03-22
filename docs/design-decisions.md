@@ -136,4 +136,4 @@ Short rationale for major choices in this reference repo. For full diagrams see 
 
 ## Optional future: MCP-less graceful path
 
-A planned UX improvement when **no MCP tools** succeed is sketched in [`archive/graceful-degradation.plan.md`](archive/graceful-degradation.plan.md) (short user description → single LLM YAML). Not implemented in application code unless that plan is executed.
+A possible UX improvement when **no MCP tools** succeed: collect a short user description of the table and generate YAML in a **single** LLM call instead of the full gather → plan → execute loop. Not implemented.
