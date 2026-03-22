@@ -61,11 +61,11 @@ sequenceDiagram
 
 ### 1. Gather (MCP)
 
-- Runs only when **`context_cache`** is empty for the session. If already populated, the agent emits a **`trace`** line and skips gather.  
-- **Serialized per `session_id`** with an `asyncio.Lock`: concurrent `GET …/stream` connections do not each run a full MCP tool storm; the follower reloads the session and may see cached context after the leader finishes.  
-- Implementation: `_iter_gather_context_events` → `MCPRegistry` / `call_tool` for tables in scope; results plus **`_mcp_tool_manifest`** are persisted to `context_cache`.  
+- Runs when **`_mcp_needs_gather(context_cache)`** is true: cache is **empty** or **`_mcp_gather_complete`** is not `true`. **Partial** caches (some table/tool cells already saved) **resume** gather: existing cells are **merged** from the DB, **`call_tool` is skipped** for cells that already exist, and **`trace`** may show **skip cached** for those cells. If gather is not needed, the agent emits **`trace`: “Using cached MCP context”** and skips gather.  
+- **Serialized per `session_id`** with an `asyncio.Lock`: concurrent `GET …/stream` connections do not each run a full MCP tool storm; the follower reloads the session and may see **partial or complete** cached context after the leader saves.  
+- Implementation: `_iter_gather_context_events` → merge seed → `MCPRegistry` / `call_tool` only for **missing** `(table_fqn, tool_name)` cells; **`_mcp_tool_manifest`** is rebuilt each run; **`_mcp_gather_complete: true`** is set only when every expected cell exists. **`UPDATE`s** may occur **after each new cell** (partial) and once at completion.  
 - **Incomplete gather** (e.g. stream ends before gather finishes, or MCP connect fails before any payload is built) does **not** write an empty `{}` to `context_cache`, so the next `/stream` can run gather again without “locking in” an empty cache row.  
-- **Fail-open:** tool exceptions or MCP error payloads are stored per tool (no retries); gather continues and planning/execution use partial context.  
+- **Fail-open:** tool exceptions or MCP error payloads are stored per tool (no retries within a cell); existing **error cells are skipped** on reconnect like any other filled cell. Gather continues and planning/execution use partial context.  
 - Tool selection and argument shaping: [`tool_manifest.py`](../src/genify/backend/mcp/tool_manifest.py), `_build_tool_args` in `core.py` (only tools whose schemas match known table-parameter patterns auto-gather).  
 
 **Important:** The **executor never calls MCP** for routine section work. It only reads the **cached** context blob.
@@ -100,9 +100,9 @@ sequenceDiagram
 flowchart TB
   subgraph phase1 [Phase_1_Gather]
     G0[Load session + template]
-    G1{context_cache empty?}
-    G2[Connect MCP servers + call_tool per table]
-    G3[Persist context_cache + manifest]
+    G1{needs_gather incomplete cache?}
+    G2[Connect MCP merge skip cached call_tool missing cells]
+    G3[Persist partial and complete + manifest]
     G0 --> G1
     G1 -->|yes| G2
     G1 -->|no| G4[trace: use cached MCP context]

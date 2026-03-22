@@ -26,7 +26,7 @@ Backend APIs are under `/api/*` (sessions, completed metadata, templates, catalo
 ## Typical flows
 
 1. **Home** — Pick catalog/schema → select table(s) → choose template type and mode → **Start**. Open an existing row from **Your Sessions** to resume.
-2. **Agent run** — SSE connects; MCP tools populate **context** once per session; the LLM **plans** sections; each section **executes** (hands-off runs through; interactive may **pause** with a `question`).
+2. **Agent run** — SSE connects; MCP tools **incrementally** populate **`context_cache`** (merge, skip cached cells, **`_mcp_gather_complete`** when done); the LLM **plans** sections; each section **executes** (hands-off runs through; interactive may **pause** with a `question`).
 3. **Complete** — Final YAML is merged and saved; **Open in Library** uses `completed_id` from the `complete` event when present.
 4. **Library** — Find a card, edit YAML, **Save** (server regenerates Markdown).
 5. **Templates** — Adjust template YAML for your org; activate/default as needed for new sessions.
@@ -37,7 +37,7 @@ Backend APIs are under `/api/*` (sessions, completed metadata, templates, catalo
 
 - **Hands-off** — The agent fills sections from gathered context; unknowns may appear as `NEEDS_CLARIFICATION` in YAML. One continuous stream from gather through **Complete** (subject to network/proxy limits).
 - **Interactive** — The planner may use strategies that **pause** for your input. On a **question**, the client closes SSE while you compose an answer; you **POST** `/api/sessions/{id}/answer` and open a **new** stream to continue. The **Activity trace** shows MCP tool names, cache hints, and merge/LLM phases—use it for debugging, not as the main narrative (see [ADR-9](design-decisions.md#adr-9-transcript-first-session-ui)).
-- **MCP gather** — Runs when `context_cache` is empty; failures are stored and the run continues (**fail-open**). Details: [agentic-loop.md](agentic-loop.md), [mcp-and-agents.md](mcp-and-agents.md).
+- **MCP gather** — Runs until **`_mcp_gather_complete`**; partial caches **resume** after reconnect. Failures are stored and the run continues (**fail-open**). Details: [agentic-loop.md](agentic-loop.md), [mcp-and-agents.md](mcp-and-agents.md).
 
 Full UX principles and component map: **[ui-design.md](ui-design.md)**.
 

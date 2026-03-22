@@ -42,6 +42,11 @@ python -m unittest discover -s tests -p 'test_*.py' -v
 
 Use **Python 3.11 or 3.12** if `pip install` fails on 3.14 (some wheels are not published yet).
 
+## `test_context_cache_persist.py` / `test_gather_incremental.py`
+
+- **`_save_context_cache`** must not `UPDATE` with an empty `{}`.
+- **`_mcp_needs_gather`**, seed merge, and mocked **`_iter_gather_context_events`** (skip cached cells, call only missing tools).
+
 ## `test_genify_sessions_answer.py`
 
 Smoke tests for `POST /api/sessions/{id}/answer` (**409** vs **200**) with a **mocked** Lakebase pool (no real PostgreSQL).

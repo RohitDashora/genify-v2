@@ -190,9 +190,9 @@ The orchestration lives in [`run_agent`](../src/genify/backend/agent/core.py). C
 flowchart TB
   subgraph phase1 [Phase_1_Gather]
     G0[Load session + template]
-    G1{context_cache empty?}
-    G2[Connect MCP servers + call_tool per table]
-    G3[Persist context_cache + manifest]
+    G1{needs_gather incomplete cache?}
+    G2[Connect MCP merge skip cached fill missing cells]
+    G3[Persist partial and complete + manifest]
     G0 --> G1
     G1 -->|yes| G2
     G1 -->|no| G4[trace: use cached MCP context]
@@ -225,7 +225,7 @@ flowchart TB
   end
 ```
 
-- **Gather** runs once per session (unless cache already populated); see [mcp-and-agents.md — Concurrent SSE](mcp-and-agents.md#concurrent-sse-and-mcp-gather).
+- **Gather** runs until **`_mcp_gather_complete`** is true (empty or partial cache triggers incremental gather); see [mcp-and-agents.md — Concurrent SSE](mcp-and-agents.md#concurrent-sse-and-mcp-gather).
 - **Plan** is produced by the LLM from template sections + MCP context summary + mode (`hands_off` | `interactive`); prompts in [`prompts.py`](../src/genify/backend/agent/prompts.py).
 - **Execute** walks plan steps; interactive pauses **do not** re-gather MCP — they merge user text into the running YAML via `incorporate_answer` on the next stream.
 
@@ -269,7 +269,7 @@ During **gather**, **plan**, and **execute**, the server may emit many **`trace`
 - A **conversation transcript** (assistant / user / system)—plan summaries, questions, answers, completion—built from SSE plus **hydration** from `GET /api/sessions/{id}` (`conversation` in Lakebase) so **Resume** is not an empty thread.
 - An **activity trace** panel for `trace` lines only—**collapsed by default**; operators can expand and copy.
 
-If `context_cache` or `plan` already exists on the session, the agent skips recomputation and emits **`trace`** lines such as “Using cached MCP context” / “Using cached plan”.
+If **`context_cache` is complete** (`_mcp_gather_complete`) or `plan` already exists on the session, the agent skips that phase’s recomputation and emits **`trace`** lines such as “Using cached MCP context” / “Using cached plan”.
 
 Interactive mode can pause with `waiting_for_user`, resume on answer — same loop, persisted in `genify.sessions`. The row may include **`pending_question`** (JSON): same payload shape as the SSE `question` event, so reconnect or page refresh can restore the composer without re-running the section LLM.
 

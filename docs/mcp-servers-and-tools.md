@@ -94,6 +94,6 @@ python scripts/mcp_discover_uc_tools.py --catalog agent_spark --schema custom_ag
 
 ## Context in the agent
 
-After gather, results are stored per **table FQN** in `sessions.context_cache` in Lakebase, plus **`_mcp_tool_manifest`** for the planner. See [mcp-and-agents.md — Context cache shape](mcp-and-agents.md#context-cache-shape-sessionscontext_cache).
+Gather writes an incremental **`sessions.context_cache`**: per-table FQN maps, **`_mcp_tool_manifest`**, and **`_mcp_gather_complete`** when all expected tool cells exist. Reconnects **merge** existing cells and **skip** `call_tool` for keys already present (Activity trace: skip cached). See [mcp-and-agents.md — Context cache shape](mcp-and-agents.md#context-cache-shape-sessionscontext_cache).
 
 The **executor does not call MCP again** per plan step; it uses the **cached** gather payload. Planner `data_sources` are **hints**, not a second tool scheduler — [architecture.md — Planner vs executor](architecture.md#5-agent-session-sequence-simplified).

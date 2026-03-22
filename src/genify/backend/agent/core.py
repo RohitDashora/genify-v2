@@ -4,6 +4,7 @@ Called from routes/sessions.py when the SSE stream is opened.
 Handles: context gathering, planning, execution, pause/resume, finalization.
 """
 import asyncio
+import copy
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -25,6 +26,8 @@ from backend.mcp.tool_manifest import build_tool_manifest, tools_for_auto_gather
 
 logger = logging.getLogger(__name__)
 
+_MCP_GATHER_COMPLETE_KEY = "_mcp_gather_complete"
+
 # Serialize MCP gather per session so concurrent GET /stream handlers do not each run a full tool storm.
 # Double-check context_cache after acquire (follower reloads DB and skips gather if leader finished).
 # Single process only; multiple Uvicorn workers need DB advisory lock or workers=1.
@@ -39,6 +42,26 @@ async def _get_session_mcp_gather_lock(session_id: str) -> asyncio.Lock:
             lock = asyncio.Lock()
             _session_mcp_gather_locks[session_id] = lock
         return lock
+
+
+def _mcp_needs_gather(context: dict) -> bool:
+    """True if we should run MCP gather (empty cache or incremental gather not finished)."""
+    if not context:
+        return True
+    return not bool(context.get(_MCP_GATHER_COMPLETE_KEY))
+
+
+def _seed_merged_table_context(raw: dict) -> dict:
+    """Copy per-table entries from an existing context_cache (exclude top-level metadata keys)."""
+    out: dict[str, Any] = {}
+    for k, v in raw.items():
+        if k.startswith("_"):
+            continue
+        if isinstance(v, dict):
+            out[k] = copy.deepcopy(v)
+        else:
+            out[k] = v
+    return out
 
 
 async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
@@ -95,7 +118,7 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
 
         # 3. Gather context via MCP tools (serialized per session for concurrent /stream)
         context = _normalize_context_cache(session.get("context_cache"))
-        if not context:
+        if _mcp_needs_gather(context):
             gather_lock = await _get_session_mcp_gather_lock(session_id)
             if gather_lock.locked():
                 yield streamer.trace(
@@ -109,24 +132,32 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
                     yield streamer.error("not_found", "Session not found")
                     return
                 context = _normalize_context_cache(session.get("context_cache"))
-                if not context:
+                if _mcp_needs_gather(context):
                     yield streamer.status(
                         "gathering_context",
                         "Gathering data context via MCP tools...",
                     )
                     out: dict[str, Any] = {}
-                    async for evt in _iter_gather_context_events(session, streamer, out):
+                    async for evt in _iter_gather_context_events(
+                        session, streamer, out, pool, session_id
+                    ):
                         yield evt
                     gathered = out.get("context")
-                    context = gathered if isinstance(gathered, dict) else {}
-                    if context:
-                        _save_context_cache(pool, session_id, context)
+                    if isinstance(gathered, dict) and gathered:
+                        context = gathered
                     else:
-                        logger.info(
-                            "MCP gather did not persist context_cache (empty or incomplete) "
-                            "for session %s",
-                            session_id,
+                        session = _load_session(pool, session_id)
+                        context = (
+                            _normalize_context_cache(session.get("context_cache"))
+                            if session
+                            else {}
                         )
+                        if not context:
+                            logger.info(
+                                "MCP gather did not persist context_cache (empty or incomplete) "
+                                "for session %s",
+                                session_id,
+                            )
                 else:
                     logger.info(
                         "MCP gather skipped for session %s — context populated while waiting (parallel stream)",
@@ -733,14 +764,23 @@ async def _iter_gather_context_events(
     session: dict,
     streamer: EventStreamer,
     out: dict[str, Any],
+    pool,
+    session_id: str,
 ) -> AsyncGenerator[dict, None]:
-    """Run MCP gather; yield trace SSE dicts; set out['context'] to the result dict."""
+    """Run MCP gather; yield trace SSE dicts; set out['context'] to the result dict.
+
+    Merges existing table/tool cells from context_cache, skips call_tool when a cell
+    exists, persists partial progress, and sets _mcp_gather_complete when done.
+    """
     config = get_config()
     registry = MCPRegistry([
         {"name": s.name, "type": s.type, "app_name": s.app_name,
          "uc_catalog": s.uc_catalog, "uc_schema": s.uc_schema, "url": s.url}
         for s in config.mcp_servers
     ])
+
+    raw_cache = _normalize_context_cache(session.get("context_cache"))
+    context: dict[str, Any] = _seed_merged_table_context(raw_cache)
 
     yield streamer.trace(
         "system",
@@ -758,7 +798,6 @@ async def _iter_gather_context_events(
         )
         return
 
-    context: dict[str, Any] = {}
     table_ref = session.get("table_ref", {})
 
     tables: list[dict] = []
@@ -784,12 +823,20 @@ async def _iter_gather_context_events(
             phase="gather",
         )
 
+    def persist_partial() -> None:
+        context[_MCP_GATHER_COMPLETE_KEY] = False
+        _save_context_cache(pool, session_id, context)
+
     for tbl in tables:
         cat = tbl.get("catalog", "")
         sch = tbl.get("schema", "")
         tname = tbl.get("table", "")
         tbl_key = f"{cat}.{sch}.{tname}"
-        tbl_context: dict[str, Any] = {}
+        seeded = context.get(tbl_key)
+        if isinstance(seeded, dict):
+            tbl_context: dict[str, Any] = copy.deepcopy(seeded)
+        else:
+            tbl_context = {}
 
         for tool in gather_tools:
             tool_name = tool["name"]
@@ -797,6 +844,15 @@ async def _iter_gather_context_events(
             if args is None:
                 continue
             tfqn = tbl_key if multi_table else None
+            if tool_name in tbl_context:
+                yield streamer.trace(
+                    "tool",
+                    f"Skipping {tool_name} (cached)",
+                    tool=tool_name,
+                    phase="gather",
+                    table_fqn=tfqn,
+                )
+                continue
             yield streamer.trace(
                 "tool",
                 f"Calling {tool_name}",
@@ -833,9 +889,13 @@ async def _iter_gather_context_events(
                     phase="gather",
                     table_fqn=tfqn,
                 )
+            context[tbl_key] = tbl_context
+            persist_partial()
 
         context[tbl_key] = tbl_context
 
+    context[_MCP_GATHER_COMPLETE_KEY] = True
+    _save_context_cache(pool, session_id, context)
     out["context"] = context
     yield streamer.trace(
         "system",

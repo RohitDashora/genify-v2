@@ -36,11 +36,11 @@ Short rationale for major choices in this reference repo. For full diagrams see 
 
 ## ADR-3b: MCP gather fail-open (no retries)
 
-**Decision:** Each `call_tool` runs **once** per `(table, tool)` while building `context_cache`. Failures and MCP error payloads are stored as structured entries; the run **continues**.
+**Decision:** Each `call_tool` runs **once** per `(table, tool)` **while that cell is missing** from `context_cache`. The agent **merges** prior cells, **skips** existing keys (including error sentinels) on reconnect, and sets **`_mcp_gather_complete: true`** only when every expected cell exists. Failures and MCP error payloads are stored as structured entries; the run **continues**.
 
-**Rationale:** Some tools do not apply to all table types; retrying the same failing call rarely helps.
+**Rationale:** Some tools do not apply to all table types; retrying the same failing call rarely helps. Incremental persistence avoids redoing work after partial gathers or client disconnects.
 
-**Tradeoff:** Planners must tolerate partial context (documented in prompts).
+**Tradeoff:** Planners must tolerate partial context (documented in prompts). Retrying a failed cell requires a new session or cache clear unless a future feature adds explicit invalidation.
 
 ---
 
@@ -126,7 +126,7 @@ Short rationale for major choices in this reference repo. For full diagrams see 
 
 **Decision:** Store `context_cache` as a dict with **metadata keys (`_` prefix)** plus **`catalog.schema.table` → { tool: result }**, never flattening to a single table’s inner map at the top level.
 
-**Primary metadata:** **`_mcp_tool_manifest`** — structured list from MCP discovery (full `inputSchema`, server, `callable` / `source`) plus optional `app.yaml` `mcp_tool_overrides`. **Legacy:** `_tool_descriptions` string (planner still accepts old caches).
+**Primary metadata:** **`_mcp_tool_manifest`** — structured list from MCP discovery (full `inputSchema`, server, `callable` / `source`) plus optional `app.yaml` `mcp_tool_overrides`. **`_mcp_gather_complete`** — boolean; when `true`, gather is skipped on subsequent streams unless the cache is cleared or session scope changes (if `table_ref` ever becomes mutable, invalidate completion). **Legacy:** `_tool_descriptions` string (planner still accepts old caches).
 
 **Rationale:** The planner and executor expect metadata keys (`_`) and FQN keys; flattening broke saves when metadata was the first key. The manifest gives the planning LLM exact tool names and schemas without maintaining a duplicate registry in YAML.
 
