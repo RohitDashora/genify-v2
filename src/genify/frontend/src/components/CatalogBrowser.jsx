@@ -4,13 +4,40 @@ import { Search, Loader2 } from 'lucide-react'
 import { fetchJSON } from '../api'
 import HelpHint from './HelpHint'
 
+/** Split on first underscore only (e.g. MATERIALIZED_VIEW → two lines; MANAGED → one). */
+function tableTypePillLines(type) {
+  if (type == null || type === '') return ['', '']
+  const s = String(type).trim().toUpperCase()
+  const i = s.indexOf('_')
+  if (i === -1) return [s, '']
+  return [s.slice(0, i), s.slice(i + 1)]
+}
+
+function TableTypePill({ type }) {
+  const [line1, line2] = tableTypePillLines(type)
+  if (!line1) return null
+  return (
+    <span
+      className="shrink-0 inline-flex min-w-[3rem] max-w-[4.75rem] flex-col items-center justify-center rounded-md border border-gray-200 bg-gray-50 px-1 py-1 text-center leading-[1.1] text-[9px] font-semibold uppercase tracking-wide text-gray-500"
+      title={type ? String(type) : undefined}
+    >
+      <span className="break-words hyphens-auto">{line1}</span>
+      {line2 ? <span className="break-words hyphens-auto">{line2}</span> : null}
+    </span>
+  )
+}
+
 function SkeletonRows({ n = 6 }) {
   return (
     <div className="border border-border-subtle rounded-lg overflow-hidden divide-y divide-gray-100">
       {Array.from({ length: n }).map((_, i) => (
-        <div key={i} className="flex items-center gap-3 px-4 py-3 animate-pulse">
-          <div className="h-4 w-4 rounded bg-gray-200" />
-          <div className="flex-1 h-4 bg-gray-200 rounded max-w-xs" />
+        <div key={i} className="flex items-start gap-3 px-4 py-3 animate-pulse">
+          <div className="mt-0.5 h-4 w-4 shrink-0 rounded bg-gray-200" />
+          <div className="flex-1 min-w-0 space-y-2">
+            <div className="h-4 bg-gray-200 rounded max-w-xs" />
+            <div className="h-3 bg-gray-100 rounded w-full" />
+          </div>
+          <div className="h-10 w-12 shrink-0 rounded-md bg-gray-100" />
         </div>
       ))}
     </div>
@@ -232,21 +259,26 @@ export default function CatalogBrowser({ onSelect }) {
               {filteredTables.map((t) => (
                 <label
                   key={t.name}
-                  className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-0"
+                  className="flex items-start gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-0"
                 >
                   <input
                     type="checkbox"
                     checked={selectedTables.has(t.name)}
                     onChange={() => toggleTable(t.name)}
-                    className="rounded border-gray-300 text-brand-500 focus:ring-brand-500"
+                    className="mt-1 shrink-0 rounded border-gray-300 text-brand-500 focus:ring-brand-500"
                   />
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm font-medium">{t.name}</span>
+                  <div className="flex-1 min-w-0 pr-1">
+                    <div className="text-sm font-medium text-gray-900 break-words">{t.name}</div>
                     {t.comment && (
-                      <span className="text-xs text-gray-400 ml-2 truncate">{t.comment}</span>
+                      <p
+                        className="text-xs text-gray-400 mt-0.5 line-clamp-2 break-words"
+                        title={String(t.comment)}
+                      >
+                        {t.comment}
+                      </p>
                     )}
                   </div>
-                  <span className="text-xs text-gray-300 uppercase shrink-0">{t.type}</span>
+                  {t.type && <TableTypePill type={t.type} />}
                 </label>
               ))}
             </div>

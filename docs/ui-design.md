@@ -6,9 +6,14 @@ Genify’s frontend is a **Vite + React** SPA under [`src/genify/frontend/`](../
 
 ## Screenshots (Home and Library)
 
-![Home — catalog pickers, template tabs, session list](images/screenshot-home.png)
+![Home — catalog pickers, template tabs, session list; table comments previewed (clamped); types as compact pills (recapture after table list UX change if the image predates clamped comments + type pill)](images/screenshot-home.png)
 
 ![Library — saved metadata list and YAML editor](images/screenshot-library.png)
+
+### Home — Select Tables list
+
+- Each table **name** is on the first line; **Unity Catalog comment** is a **two-line max** preview (`line-clamp`) with **full text on hover** (`title`), since comments can be very long.
+- **Table type** is a **compact pill** (two lines when the type contains `_`, e.g. `MATERIALIZED_VIEW`), freeing width for the comment preview. Styling uses the same **gray / border** neutrals as the Home card (`border-border-subtle`, `shadow-card` on the parent **Select Tables** card).
 
 See also [product-overview.md](product-overview.md#screenshots) and the root [README.md](../README.md#screenshots).
 
@@ -18,12 +23,13 @@ See also [product-overview.md](product-overview.md#screenshots) and the root [RE
 - **Status pill** — e.g. Created, Executing, Waiting For User, Complete — encodes lifecycle and pairs with header text (`Table Comment | hands off | Step k`).
 - **Hands-off** — Users watch gather → plan → section execution; trace proves **which MCP tools** ran (`GATHER Calling …`, `Using cached MCP context` on later phases).
 - **Interactive** — Same gather/plan, then **question** pauses with composer + optional YAML preview; see [architecture.md — Hands-off vs interactive design](architecture.md#hands-off-vs-interactive-design).
+- **Question composer (interactive pause)** — **Transcript-first:** the full question text appears only in the **Conversation** transcript (assistant message), not repeated in the composer. The composer card matches the Conversation panel (`rounded-xl`, `border-border-subtle`, `shadow-card`). It shows an optional **Answering · section · field** context line, a read-only **Suggested reply** block (slate panel, scrollable when long) when the server sends `suggested_answer`, then **Use suggestion** / **Send suggestion** and an empty textarea for a custom answer (or after copying the suggestion). Theme tokens align with [`tailwind.config.js`](../src/genify/frontend/tailwind.config.js) (`brand`, `slate`, `surface`).
 
 ![Session — hands-off MCP gather](images/screenshot-session-hands-off-gather.png)
 
 ![Session — hands-off execute + YAML](images/screenshot-session-hands-off-execute.png)
 
-![Session — interactive question](images/screenshot-session-interactive-waiting-user.png)
+![Session — interactive question (recapture after composer changes if the image predates the suggested-reply panel layout)](images/screenshot-session-interactive-waiting-user.png)
 
 ## Transcript first, trace second
 

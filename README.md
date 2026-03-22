@@ -10,7 +10,7 @@ Full documentation: **[docs/README.md](docs/README.md)** — start with **[docs/
 
 ### Screenshots
 
-**Home** — Unity Catalog catalog/schema pickers, Table comment vs Genie Space, hands-off vs interactive, and session list.
+**Home** — Unity Catalog catalog/schema pickers, **Select Tables** list (long comments previewed; full text on hover), Table comment vs Genie Space, hands-off vs interactive, and session list.
 
 ![Genify Home — catalog, template type, and sessions](docs/images/screenshot-home.png)
 
@@ -110,7 +110,8 @@ Details: **[docs/deploy.md](docs/deploy.md)**.
 | Doc | Topic |
 |-----|--------|
 | [docs/product-overview.md](docs/product-overview.md) | Product story, BYO templates, Genie/table metadata |
-| [docs/architecture.md](docs/architecture.md) | Three pillars, agent loop, hands-off vs interactive, SSE, Library |
+| [docs/architecture.md](docs/architecture.md) | Three pillars, system diagrams, hands-off vs interactive, SSE, Library |
+| [docs/agentic-loop.md](docs/agentic-loop.md) | `run_agent` gather → plan → execute, invariants, code map |
 | [docs/ui-design.md](docs/ui-design.md) | Transcript-first UI, shell, Library, session screenshots |
 | [docs/mcp-servers-and-tools.md](docs/mcp-servers-and-tools.md) | Each MCP server + tool; BYO MCP; `hidden_tools` |
 | [docs/mcp-and-agents.md](docs/mcp-and-agents.md) | Managed vs custom MCP, deps, troubleshooting |

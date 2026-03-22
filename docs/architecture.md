@@ -154,6 +154,8 @@ Details: [deploy.md](deploy.md).
 
 ## 5. Agent session sequence (simplified)
 
+**Dedicated doc:** For the full **gather → plan → execute** narrative, cache rules, planner vs executor invariants, and a contributor code map in one place, see **[agentic-loop.md](agentic-loop.md)**. The subsections below keep the **sequence diagrams**, **hands-off vs interactive** detail, **client lifecycle**, **SSE event table**, and **UI mapping** alongside the rest of this architecture page.
+
 From [`backend/agent/core.py`](../src/genify/backend/agent/core.py) `run_agent`:
 
 ```mermaid
@@ -295,9 +297,9 @@ High-level UX goals—transcript-first session, responsive shell, progressive di
 | Area | Components (under `src/genify/frontend/src/`) | Notes |
 |------|-----------------------------------------------|--------|
 | **Shell** | `App.jsx`, `layout/AppShell.jsx`, `layout/AppSidebar.jsx`, `ScrollToTop.jsx`, `PageSkeleton.jsx`, `NotFound.jsx` | **Desktop:** persistent left sidebar (~240px) — **Home**, **Library** — plus full-width main (`flex-1 min-w-0`). **&lt; md:** hamburger + slide-over drawer + backdrop; drawer closes on route change. No `max-w-6xl` cap on workspace. |
-| **Home** | `Home.jsx`, `CatalogBrowser.jsx`, `SessionLauncher.jsx`, `SessionList.jsx` | Catalog via TanStack Query; table filter + select visible/clear; launcher; session list filters, relative `updated_at`, `ConfirmDialog` for delete. **`HelpHint`** on section titles where useful. |
+| **Home** | `Home.jsx`, `CatalogBrowser.jsx`, `SessionLauncher.jsx`, `SessionList.jsx` | Catalog via TanStack Query; **Select Tables** list: comment `line-clamp` preview + full text on hover; compact table-type pill; table filter + select visible/clear; launcher; session list filters, relative `updated_at`, `ConfirmDialog` for delete. **`HelpHint`** on section titles where useful. |
 | **Library** | `library/LibraryLayout.jsx`, `library/LibraryList.jsx`, `library/LibraryDetail.jsx` | **`/library`** master–detail on `lg+` (card list + outlet). **`/library/:completedId`** detail: YAML \| Markdown toggle, CodeMirror edit, validate (`js-yaml`), Save / Revert, Copy YAML / Copy Markdown. Cards show `table_fqn` or **Combined** for multi-table sessions. Mobile: stacked list ↔ detail with back. |
-| **Session** | `SessionView.jsx`, `SessionPageHeader.jsx`, `SessionTranscript.jsx`, `QuestionComposer.jsx`, `YamlPanel.jsx`, `TracePanel.jsx`, `TranscriptMarkdown.jsx` | Status pill; markdown transcript (dimmed while agent working); composer (draft preserved on same-pause `question` replay; **EventSource** closed after `question`); YAML in CodeMirror; trace panel; stream warning as header **WifiOff** chip + debounced `onerror` (suppressed while `question` active); jump-to-latest when scrolled up. **Back** in header **hidden on `md+`** (sidebar provides nav). **`complete` SSE** may include **`completed_id`** → **Open in Library** + correct **`PUT /completed/{id}`** on YAML save (via ref or `GET /sessions/{id}/completed`). |
+| **Session** | `SessionView.jsx`, `SessionPageHeader.jsx`, `SessionTranscript.jsx`, `QuestionComposer.jsx`, `YamlPanel.jsx`, `TracePanel.jsx`, `TranscriptMarkdown.jsx` | Status pill; markdown transcript (dimmed while agent working); **`QuestionComposer`**: full question in transcript only; suggested reply read-only panel + Use/Send suggestion + textarea (draft preserved on same-pause `question` replay; **EventSource** closed after `question`); YAML in CodeMirror; trace panel; stream warning as header **WifiOff** chip + debounced `onerror` (suppressed while `question` active); jump-to-latest when scrolled up. **Back** in header **hidden on `md+`** (sidebar provides nav). **`complete` SSE** may include **`completed_id`** → **Open in Library** + correct **`PUT /completed/{id}`** on YAML save (via ref or `GET /sessions/{id}/completed`). |
 | **Shared** | `HelpHint.jsx`, `utils/tableRef.js` | Contextual **?** tooltips (hover + focus-within). Shared **table label** formatting for session + library cards. |
 
 Shared API: [`api.js`](../src/genify/frontend/src/api.js) (`fetchJSON`, `connectSSE` with `onOpen` / `onStreamError`).

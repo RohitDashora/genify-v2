@@ -13,13 +13,14 @@ This documentation describes a **reference LLM agent on Databricks Apps** that c
 
 1. **[product-overview.md](product-overview.md)** — What Genify is, templates, catalog → Library flow.
 2. **[architecture.md](architecture.md)** — **§0 Three pillars**, system context, MCP topology, deploy flow, agent sequence, **SSE** (including `complete.completed_id`), **shell + Library UI**, **`completed_metadata` / `table_fqn`** (Mermaid diagrams). [ui-design.md](ui-design.md) summarizes session UX principles.
-3. **[mcp-and-agents.md](mcp-and-agents.md)** — Managed vs custom MCP, `app.yaml`, UC SQL functions, Python dependencies, BYO servers (overview).
-4. **[mcp-servers-and-tools.md](mcp-servers-and-tools.md)** — Inventory of every shipped tool; `hidden_tools`; bring-your-own MCP checklist.
-5. **[llm-and-tokens.md](llm-and-tokens.md)** — `max_prompt_tokens`, `trim_history`, `context_truncation`, summarizer binding, SSE vs LLM limits.
-6. **[deploy.md](deploy.md)** — Prerequisites, `deploy.config.yaml`, `./deploy.sh`, troubleshooting.
-7. **[security-auth.md](security-auth.md)** — Service principals, resource bindings, secrets, UC permissions.
-8. **[extending.md](extending.md)** — Add MCP servers, UC functions, new workspaces.
-9. **[design-decisions.md](design-decisions.md)** — Short ADR-style rationale.
+3. **[agentic-loop.md](agentic-loop.md)** — **Gather → plan → execute** in one place: `run_agent` phases, cache rules, planner vs executor, code map, invariants.
+4. **[mcp-and-agents.md](mcp-and-agents.md)** — Managed vs custom MCP, `app.yaml`, UC SQL functions, Python dependencies, BYO servers (overview).
+5. **[mcp-servers-and-tools.md](mcp-servers-and-tools.md)** — Inventory of every shipped tool; `hidden_tools`; bring-your-own MCP checklist.
+6. **[llm-and-tokens.md](llm-and-tokens.md)** — `max_prompt_tokens`, `trim_history`, `context_truncation`, summarizer binding, SSE vs LLM limits.
+7. **[deploy.md](deploy.md)** — Prerequisites, `deploy.config.yaml`, `./deploy.sh`, troubleshooting.
+8. **[security-auth.md](security-auth.md)** — Service principals, resource bindings, secrets, UC permissions.
+9. **[extending.md](extending.md)** — Add MCP servers, UC functions, new workspaces.
+10. **[design-decisions.md](design-decisions.md)** — Short ADR-style rationale.
 
 ## Repository map
 
