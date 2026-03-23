@@ -3,6 +3,7 @@
 .venv/
 .venv-test/
 .venv_genify_ci/
+.venv312/
 venv/
 # If someone creates a venv inside tests/ by mistake
 tests/.venv/
