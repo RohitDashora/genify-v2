@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from psycopg.rows import dict_row
 from sse_starlette.sse import EventSourceResponse
 
+from backend.artifact_status import ARTIFACT_COMPLETE, DRAFT_ARTIFACT_STATUSES
 from backend.db import get_pool, SCHEMA
 from backend.middleware import get_current_user
 from backend.agent.yaml_merge import remove_section_key
@@ -96,7 +97,7 @@ async def list_sessions(
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 f"SELECT id, template_type, mode, status, table_ref, "
-                f"current_step, created_at, updated_at, completed_at "
+                f"current_step, library_artifact_id, created_at, updated_at, completed_at "
                 f"FROM {SCHEMA}.sessions {where} ORDER BY updated_at DESC",
                 params,
             )
@@ -249,7 +250,7 @@ async def retry_section(
             if not row:
                 raise HTTPException(404, detail="Session not found")
             st = row.get("status") or ""
-            if st not in ("executing", "waiting_for_user"):
+            if st not in ("executing", "waiting_for_user", "failed"):
                 raise HTTPException(
                     409,
                     detail={
@@ -266,7 +267,8 @@ async def retry_section(
                 cur.execute(
                     f"UPDATE {SCHEMA}.sessions SET "
                     f"pending_section_yaml = '', pending_question = NULL, "
-                    f"status = 'executing', updated_at = now() WHERE id = %s",
+                    f"status = 'executing', error_message = NULL, error_code = NULL, "
+                    f"updated_at = now() WHERE id = %s",
                     (str(session_id),),
                 )
                 conn.commit()
@@ -288,11 +290,55 @@ async def retry_section(
                 f"UPDATE {SCHEMA}.sessions SET "
                 f"generated_yaml = %s, current_step = %s, "
                 f"pending_section_yaml = '', pending_question = NULL, "
-                f"status = 'executing', updated_at = now() WHERE id = %s",
+                f"status = 'executing', error_message = NULL, error_code = NULL, "
+                f"updated_at = now() WHERE id = %s",
                 (new_yaml, idx, str(session_id)),
             )
         conn.commit()
     return {"ok": True, "current_step": idx}
+
+
+@router.post("/{session_id}/restart")
+async def restart_session(
+    session_id: UUID,
+    user_email: str = Depends(get_current_user),
+):
+    """Clear agent state so the next SSE connection starts fresh (same session id)."""
+    pool = _pool()
+    sid = str(session_id)
+    st_list = tuple(DRAFT_ARTIFACT_STATUSES)
+    placeholders = ", ".join(["%s"] * len(st_list))
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"SELECT id FROM {SCHEMA}.sessions WHERE id = %s AND user_email = %s",
+                (sid, user_email),
+            )
+            if not cur.fetchone():
+                raise HTTPException(404, detail="Session not found")
+            cur.execute(
+                f"DELETE FROM {SCHEMA}.completed_metadata "
+                f"WHERE session_id = %s AND user_email = %s "
+                f"AND artifact_status IN ({placeholders})",
+                (sid, user_email, *st_list),
+            )
+            cur.execute(
+                f"UPDATE {SCHEMA}.completed_metadata SET session_id = NULL, updated_at = now() "
+                f"WHERE session_id = %s AND user_email = %s AND artifact_status = %s",
+                (sid, user_email, ARTIFACT_COMPLETE),
+            )
+            cur.execute(
+                f"UPDATE {SCHEMA}.sessions SET "
+                f"status = 'created', current_step = 0, "
+                f"generated_yaml = '', pending_section_yaml = '', pending_question = NULL, "
+                f"plan = NULL, conversation = '[]'::jsonb, context_cache = '{{}}'::jsonb, "
+                f"generated_json = NULL, error_message = NULL, error_code = NULL, "
+                f"library_artifact_id = NULL, completed_at = NULL, updated_at = now() "
+                f"WHERE id = %s AND user_email = %s",
+                (sid, user_email),
+            )
+        conn.commit()
+    return {"ok": True}
 
 
 @router.delete("/{session_id}")
@@ -300,14 +346,23 @@ async def delete_session(
     session_id: UUID,
     user_email: str = Depends(get_current_user),
 ):
-    """Delete a session."""
+    """Delete a session and linked draft Library rows (detached rows are kept)."""
     pool = _pool()
+    sid = str(session_id)
+    st_list = tuple(DRAFT_ARTIFACT_STATUSES)
+    placeholders = ", ".join(["%s"] * len(st_list))
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
+                f"DELETE FROM {SCHEMA}.completed_metadata "
+                f"WHERE session_id = %s AND user_email = %s "
+                f"AND artifact_status IN ({placeholders})",
+                (sid, user_email, *st_list),
+            )
+            cur.execute(
                 f"DELETE FROM {SCHEMA}.sessions "
                 f"WHERE id = %s AND user_email = %s",
-                (str(session_id), user_email),
+                (sid, user_email),
             )
             if cur.rowcount == 0:
                 raise HTTPException(404, detail="Session not found")

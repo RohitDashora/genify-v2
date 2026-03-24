@@ -14,10 +14,10 @@ env:
 
 config:
   llm:
-    endpoint_name: "databricks-gpt-5-2"
-    max_tokens: 40000 #max output tokens for the LLM
+    endpoint_name: "databricks-gpt-5-4"
+    max_tokens: 80000 #max output tokens for the LLM
     temperature: 0.7 #temperature for the LLM
-    max_prompt_tokens: 20000 #max input tokens for the LLM prompt (trim_history budget per call)
+    max_prompt_tokens: 40000 #max input tokens for the LLM prompt (trim_history budget per call)
 
   lakebase:
     enabled: true
@@ -28,13 +28,17 @@ config:
   yaml_merge:
     merge_max_retries: 2
     nested_validation: strip # off | strip — align fragment keys with template.template[section_key]
-    canonical_json_enabled: false # optional dual-write JSONB on sessions.generated_json
+    canonical_json_enabled: true # optional dual-write JSONB on sessions.generated_json
+    # Canonical re-dump before persistence (parse → dump); fail-open; off by default for rollout
+    format_on_persist_enabled: true
+    format_dump_width: 120 # PyYAML wrap width when formatting is enabled
+    format_multiline_literals: true # use | for multi-line string scalars when formatting is enabled
 
   context_truncation:
-    planning_chars_per_key: 7000 # planner: each MCP context key in the planning prompt
-    executor_section_chars_per_key: 7000 # execute: each key in section context blob
-    prior_yaml_tail_chars: 7000 # section generation / incorporate: tail of prior YAML
-    interactive_known_data_chars: 7000 # interactive question prompt: known_data prefix
+    planning_chars_per_key: 70000 # planner: each MCP context key in the planning prompt
+    executor_section_chars_per_key: 70000 # execute: each key in section context blob
+    prior_yaml_tail_chars: 70000 # section generation / incorporate: tail of prior YAML
+    interactive_known_data_chars: 70000 # interactive question prompt: known_data prefix
 
   mcp_servers:
     - name: "profiler"

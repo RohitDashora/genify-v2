@@ -79,6 +79,8 @@ Short rationale for major choices in this reference repo. For full diagrams see 
 
 **Tradeoff:** Stricter model output; `merge_max_retries` and optional nested strip vs template add config surface.
 
+**Persistence polish:** Optional **`yaml_merge.format_*`** re-serializes the **merged** document only (ADR-5 single-doc model unchanged); fail-open; no formatting of committed+pending concat as one YAML.
+
 ---
 
 ## ADR-4: Imperative `deploy.sh` pipeline

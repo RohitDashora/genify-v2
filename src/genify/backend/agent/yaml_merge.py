@@ -29,9 +29,82 @@ def load_yaml_document(yaml_str: str) -> dict[str, Any]:
         return {}
 
 
-def dump_yaml_document(doc: dict[str, Any]) -> str:
-    """Stable YAML serialization for persisted/generated_yaml."""
-    return yaml.dump(doc, default_flow_style=False, allow_unicode=True, sort_keys=False)
+class _LiteralMultilineDumper(yaml.SafeDumper):
+    """SafeDumper that prefers ``|`` for multi-line string scalars when enabled."""
+
+
+def _represent_str_multiline(dumper: yaml.Dumper, data: str) -> yaml.Node:
+    if "\n" in data:
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+
+_LiteralMultilineDumper.add_representer(str, _represent_str_multiline)
+
+
+def dump_yaml_document(
+    doc: dict[str, Any],
+    *,
+    width: int | None = None,
+    literal_multiline: bool = False,
+) -> str:
+    """Stable YAML serialization for persisted/generated_yaml.
+
+    ``width`` mirrors PyYAML's wrap width (default 80 when unset — matches historical behavior).
+    ``literal_multiline`` uses block style ``|`` for strings containing newlines.
+    """
+    dump_kw: dict[str, Any] = {
+        "default_flow_style": False,
+        "allow_unicode": True,
+        "sort_keys": False,
+    }
+    if width is not None:
+        dump_kw["width"] = width
+    if literal_multiline:
+        return yaml.dump(doc, Dumper=_LiteralMultilineDumper, **dump_kw)
+    return yaml.dump(doc, **dump_kw)
+
+
+def format_yaml_for_persistence(
+    yaml_str: str,
+    *,
+    enabled: bool,
+    dump_width: int,
+    use_literal_blocks: bool,
+) -> tuple[str, bool, bool]:
+    """Parse → re-dump for readable persisted YAML. Fail-open: bad input returns original.
+
+    Returns ``(yaml_out, text_changed, parse_succeeded)``.
+    ``parse_succeeded`` is False when the input was non-trivial but could not be round-tripped
+    (parse error, non-dict root, or empty mapping ambiguity); used for trace without noise on
+    byte-identical re-dumps.
+    """
+    if not enabled:
+        return yaml_str, False, True
+    if not yaml_str or not str(yaml_str).strip():
+        return yaml_str, False, True
+    s = str(yaml_str)
+    try:
+        data = yaml.safe_load(s)
+    except yaml.YAMLError as e:
+        logger.warning("format_yaml_for_persistence: parse failed, keeping original: %s", e)
+        return yaml_str, False, False
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        logger.warning("format_yaml_for_persistence: root not a mapping, keeping original")
+        return yaml_str, False, False
+    if not data and s.strip():
+        logger.debug("format_yaml_for_persistence: empty mapping for non-empty input, keeping original")
+        return yaml_str, False, False
+    out = dump_yaml_document(
+        data,
+        width=dump_width,
+        literal_multiline=use_literal_blocks,
+    )
+    if out == s:
+        return yaml_str, False, True
+    return out, True, True
 
 
 def _fragment_to_dict(fragment_yaml: str) -> tuple[dict[str, Any] | None, str | None]:

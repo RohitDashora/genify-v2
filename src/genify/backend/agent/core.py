@@ -14,13 +14,19 @@ import yaml
 from psycopg.rows import dict_row
 
 from backend.agent.executor import execute_step, incorporate_answer, merge_section_output
-from backend.agent.yaml_merge import load_yaml_document
+from backend.agent.yaml_merge import format_yaml_for_persistence, load_yaml_document
 from backend.agent.planner import generate_plan
 from backend.agent.streamer import TRACE_DETAIL_MAX, EventStreamer
 from backend.config import get_config
+from backend.artifact_status import (
+    ARTIFACT_COMPLETE,
+    ARTIFACT_FAILED,
+    ARTIFACT_IN_PROGRESS,
+    ARTIFACT_MERGE_ERROR,
+)
 from backend.db import SCHEMA
 from backend.llm.client import get_main_llm_client
-from backend.llm.output_converter import yaml_to_markdown
+from backend.llm.output_converter import safe_yaml_to_markdown
 from backend.mcp.registry import MCPRegistry
 from backend.mcp.tool_manifest import build_tool_manifest, tools_for_auto_gather
 
@@ -28,11 +34,81 @@ logger = logging.getLogger(__name__)
 
 _MCP_GATHER_COMPLETE_KEY = "_mcp_gather_complete"
 
+_USER_AGENT_FAIL = (
+    "Something went wrong. You can retry the section or restart the session, "
+    "or open the Library to edit your saved YAML."
+)
+_MERGE_FAIL_USER = (
+    "We couldn't merge the latest section. Your previous YAML is saved in the Library—"
+    "you can retry the section or restart the session."
+)
+_MD_EXPORT_HINT = (
+    "Markdown preview had an issue. Your YAML was saved—you can edit it in the Library to refresh markdown."
+)
+
 # Serialize MCP gather per session so concurrent GET /stream handlers do not each run a full tool storm.
 # Double-check context_cache after acquire (follower reloads DB and skips gather if leader finished).
 # Single process only; multiple Uvicorn workers need DB advisory lock or workers=1.
 _session_mcp_gather_locks: dict[str, asyncio.Lock] = {}
 _session_mcp_gather_locks_mutex = asyncio.Lock()
+
+
+def _format_yaml_for_session_persistence(
+    yaml_str: str,
+    streamer: EventStreamer | None,
+    *,
+    phase: str,
+    trace_if_disabled: bool = False,
+) -> tuple[str, list[dict]]:
+    """Re-dump merged YAML before persistence when enabled. Fail-open; trace for apply / parse fail."""
+    cfg = get_config().yaml_merge
+    events: list[dict] = []
+    if not cfg.format_on_persist_enabled:
+        if streamer and trace_if_disabled:
+            events.append(
+                streamer.trace(
+                    "system",
+                    "YAML format on persist skipped (disabled)",
+                    phase=phase,
+                )
+            )
+        return yaml_str, events
+    out, changed, parse_ok = format_yaml_for_persistence(
+        yaml_str,
+        enabled=True,
+        dump_width=cfg.format_dump_width,
+        use_literal_blocks=cfg.format_multiline_literals,
+    )
+    if streamer:
+        if changed:
+            events.append(
+                streamer.trace(
+                    "system",
+                    "Canonical YAML format applied before persistence",
+                    phase=phase,
+                )
+            )
+        elif not parse_ok and (yaml_str or "").strip():
+            events.append(
+                streamer.trace(
+                    "system",
+                    "YAML format on persist failed (invalid YAML); keeping original text",
+                    phase=phase,
+                )
+            )
+    return out, events
+
+
+def _format_committed_yaml_for_library_preview(committed: str) -> str:
+    """Format only the committed merged document; never parse committed+pending concat."""
+    cfg = get_config().yaml_merge
+    out, _, _ = format_yaml_for_persistence(
+        committed,
+        enabled=cfg.format_on_persist_enabled,
+        dump_width=cfg.format_dump_width,
+        use_literal_blocks=cfg.format_multiline_literals,
+    )
+    return out
 
 
 async def _get_session_mcp_gather_lock(session_id: str) -> asyncio.Lock:
@@ -94,7 +170,9 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
             yield streamer.complete(session["generated_yaml"], session_id, completed_id=existing_id)
             return
         if status == "failed":
-            yield streamer.error("failed", session.get("error_message", "Session failed"))
+            msg = session.get("error_message") or "This session stopped with an error."
+            code = session.get("error_code") or "failed"
+            yield streamer.error(code, msg)
             return
 
         yield streamer.status("loading", "Loading session and template...")
@@ -103,7 +181,13 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
         template_yaml = _load_template(pool, session["template_type"], session["template_version"])
         if not template_yaml:
             yield streamer.error("template_not_found", "Active template not found")
-            _update_session_status(pool, session_id, "failed", error="Template not found")
+            _update_session_status(
+                pool,
+                session_id,
+                "failed",
+                error="Template not found",
+                error_code="template_not_found",
+            )
             return
 
         template = yaml.safe_load(template_yaml)
@@ -277,18 +361,50 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
                     for evt in result["events"]:
                         yield evt
                     frag = result.get("section_yaml") or ""
-                    merged, merge_events, _skipped = await merge_section_output(
-                        prior_yaml=generated_yaml,
-                        section_key=section_key,
-                        fragment_yaml=frag,
-                        template=template,
-                        llm=llm,
-                        streamer=streamer,
-                        section_name=section_name,
-                    )
+                    try:
+                        merged, merge_events, _skipped = await merge_section_output(
+                            prior_yaml=generated_yaml,
+                            section_key=section_key,
+                            fragment_yaml=frag,
+                            template=template,
+                            llm=llm,
+                            streamer=streamer,
+                            section_name=section_name,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "merge_section_output failed (incorporate) session=%s section=%s",
+                            session_id,
+                            section_key,
+                        )
+                        sess = _load_session(pool, session_id) or session
+                        _update_session_status(
+                            pool,
+                            session_id,
+                            "failed",
+                            error=_MERGE_FAIL_USER,
+                            error_code="yaml_merge_invalid",
+                        )
+                        gy_err, _fe = _format_yaml_for_session_persistence(
+                            generated_yaml, streamer, phase="execute"
+                        )
+                        for ev in _fe:
+                            yield ev
+                        _upsert_library_draft(pool, sess, gy_err, ARTIFACT_MERGE_ERROR)
+                        yield streamer.error(
+                            "yaml_merge_invalid",
+                            _MERGE_FAIL_USER,
+                            section_key=section_key,
+                        )
+                        return
                     for evt in merge_events:
                         yield evt
                     generated_yaml = merged
+                    generated_yaml, _fmt_evts = _format_yaml_for_session_persistence(
+                        generated_yaml, streamer, phase="execute"
+                    )
+                    for ev in _fmt_evts:
+                        yield ev
                     _maybe_write_generated_json(pool, session_id, generated_yaml, cfg_agent)
                     _save_step_progress(
                         pool,
@@ -348,6 +464,11 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
             strategy = step.get("strategy", "auto_fill")
             frag = result.get("section_yaml") or ""
             if strategy == "skip" or not frag.strip():
+                generated_yaml, _fmt_evts = _format_yaml_for_session_persistence(
+                    generated_yaml, streamer, phase="execute"
+                )
+                for ev in _fmt_evts:
+                    yield ev
                 _save_step_progress(
                     pool,
                     session_id,
@@ -361,18 +482,50 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
                 yield streamer.section_complete(section_key, i + 1, total_steps)
                 continue
 
-            merged, merge_events, _skipped = await merge_section_output(
-                prior_yaml=generated_yaml,
-                section_key=section_key,
-                fragment_yaml=frag,
-                template=template,
-                llm=llm,
-                streamer=streamer,
-                section_name=section_name,
-            )
+            try:
+                merged, merge_events, _skipped = await merge_section_output(
+                    prior_yaml=generated_yaml,
+                    section_key=section_key,
+                    fragment_yaml=frag,
+                    template=template,
+                    llm=llm,
+                    streamer=streamer,
+                    section_name=section_name,
+                )
+            except Exception:
+                logger.exception(
+                    "merge_section_output failed session=%s section=%s",
+                    session_id,
+                    section_key,
+                )
+                sess = _load_session(pool, session_id) or session
+                _update_session_status(
+                    pool,
+                    session_id,
+                    "failed",
+                    error=_MERGE_FAIL_USER,
+                    error_code="yaml_merge_invalid",
+                )
+                gy_err, _fe = _format_yaml_for_session_persistence(
+                    generated_yaml, streamer, phase="execute"
+                )
+                for ev in _fe:
+                    yield ev
+                _upsert_library_draft(pool, sess, gy_err, ARTIFACT_MERGE_ERROR)
+                yield streamer.error(
+                    "yaml_merge_invalid",
+                    _MERGE_FAIL_USER,
+                    section_key=section_key,
+                )
+                return
             for evt in merge_events:
                 yield evt
             generated_yaml = merged
+            generated_yaml, _fmt_evts = _format_yaml_for_session_persistence(
+                generated_yaml, streamer, phase="execute"
+            )
+            for ev in _fmt_evts:
+                yield ev
             _maybe_write_generated_json(pool, session_id, generated_yaml, cfg_agent)
             _save_step_progress(
                 pool,
@@ -392,15 +545,49 @@ async def run_agent(session_id: str, pool) -> AsyncGenerator[dict, None]:
             phase="finalize",
         )
         yield streamer.status("finalizing", "Generating markdown and saving results...")
-        markdown = yaml_to_markdown(generated_yaml, session["template_type"])
+        generated_yaml, _fmt_evts = _format_yaml_for_session_persistence(
+            generated_yaml,
+            streamer,
+            phase="finalize",
+            trace_if_disabled=True,
+        )
+        for ev in _fmt_evts:
+            yield ev
+        markdown, md_ok = safe_yaml_to_markdown(generated_yaml, session["template_type"])
         combined_id = _save_completed(pool, session, generated_yaml, markdown)
         _update_session_status(pool, session_id, "complete")
-        yield streamer.complete(generated_yaml, session_id, completed_id=combined_id)
+        yield streamer.complete(
+            generated_yaml,
+            session_id,
+            completed_id=combined_id,
+            markdown_export_failed=not md_ok,
+            markdown_export_message=_MD_EXPORT_HINT if not md_ok else "",
+        )
 
     except Exception as e:
-        logger.error(f"Agent loop error for session {session_id}: {e}", exc_info=True)
-        _update_session_status(pool, session_id, "failed", error=str(e))
-        yield streamer.error("agent_error", str(e))
+        logger.error("Agent loop error for session %s: %s", session_id, e, exc_info=True)
+        _update_session_status(
+            pool,
+            session_id,
+            "failed",
+            error=_USER_AGENT_FAIL,
+            error_code="agent_error",
+        )
+        try:
+            sess = _load_session(pool, session_id)
+            if sess and (sess.get("generated_yaml") or "").strip():
+                gy_fail = _format_committed_yaml_for_library_preview(
+                    sess.get("generated_yaml") or ""
+                )
+                _upsert_library_draft(
+                    pool,
+                    sess,
+                    gy_fail,
+                    ARTIFACT_FAILED,
+                )
+        except Exception:
+            logger.exception("library draft upsert after agent failure failed session=%s", session_id)
+        yield streamer.error("agent_error", _USER_AGENT_FAIL)
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +663,89 @@ def _section_display_name(template: dict, section_key: str) -> str:
     return section_key
 
 
+def _draft_table_fqn(table_ref: dict) -> str | None:
+    if not isinstance(table_ref, dict):
+        return None
+    if table_ref.get("tables"):
+        return None
+    t = table_ref.get("table")
+    if not t:
+        return None
+    return f"{table_ref.get('catalog', '')}.{table_ref.get('schema', '')}.{t}"
+
+
+def _upsert_library_draft(
+    pool,
+    session: dict,
+    yaml_content: str,
+    artifact_st: str,
+) -> None:
+    """Upsert progressive Library row linked to session (combined YAML)."""
+    sid = str(session["id"])
+    uid = session["user_email"]
+    tpl = session["template_type"]
+    tv = session.get("template_version")
+    tr = session.get("table_ref") or {}
+    tr_json = json.dumps(tr) if isinstance(tr, dict) else json.dumps({})
+    aid = session.get("library_artifact_id")
+    md, _ok = safe_yaml_to_markdown(yaml_content, tpl)
+    fqn = _draft_table_fqn(tr) if isinstance(tr, dict) else None
+
+    with pool.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            if aid:
+                cur.execute(
+                    f"UPDATE {SCHEMA}.completed_metadata "
+                    f"SET yaml_content = %s, markdown_content = %s, "
+                    f"artifact_status = %s, updated_at = now() "
+                    f"WHERE id = %s AND session_id = %s::uuid AND user_email = %s",
+                    (yaml_content, md, artifact_st, str(aid), sid, uid),
+                )
+                if cur.rowcount:
+                    conn.commit()
+                    return
+            cur.execute(
+                f"INSERT INTO {SCHEMA}.completed_metadata "
+                f"(session_id, user_email, template_type, template_version, table_ref, "
+                f" yaml_content, markdown_content, table_fqn, artifact_status) "
+                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (
+                    sid,
+                    uid,
+                    tpl,
+                    tv,
+                    tr_json,
+                    yaml_content,
+                    md,
+                    fqn,
+                    artifact_st,
+                ),
+            )
+            new_id = str(cur.fetchone()["id"])
+            cur.execute(
+                f"UPDATE {SCHEMA}.sessions SET library_artifact_id = %s, updated_at = now() "
+                f"WHERE id = %s::uuid",
+                (new_id, sid),
+            )
+        conn.commit()
+
+
+def _upsert_library_draft_after_step(pool, session_id: str) -> None:
+    session = _load_session(pool, session_id)
+    if not session:
+        return
+    g = session.get("generated_yaml") or ""
+    p = session.get("pending_section_yaml") or ""
+    if p.strip():
+        g_fmt = _format_committed_yaml_for_library_preview(g) if g.strip() else g
+        preview = _preview_yaml_with_pending(g_fmt, p)
+    else:
+        preview = g
+    if not (preview or "").strip():
+        return
+    _upsert_library_draft(pool, session, preview, ARTIFACT_IN_PROGRESS)
+
+
 def _preview_yaml_with_pending(committed: str, pending: str) -> str:
     c = (committed or "").strip()
     p = (pending or "").strip()
@@ -545,6 +815,7 @@ def _save_step_progress(
                 (step, yaml_content, json.dumps(conversation), pending_section_yaml, session_id),
             )
         conn.commit()
+    _upsert_library_draft_after_step(pool, session_id)
 
 
 def _save_waiting_state(
@@ -575,24 +846,40 @@ def _save_waiting_state(
                 ),
             )
         conn.commit()
+    _upsert_library_draft_after_step(pool, session_id)
 
 
-def _update_session_status(pool, session_id: str, status: str, error: str | None = None):
+def _update_session_status(
+    pool,
+    session_id: str,
+    status: str,
+    error: str | None = None,
+    error_code: str | None = None,
+):
     with pool.connection() as conn:
         with conn.cursor() as cur:
             if status == "complete":
                 cur.execute(
                     f"UPDATE {SCHEMA}.sessions "
                     f"SET status = %s, completed_at = now(), "
-                    f"pending_question = NULL, updated_at = now() WHERE id = %s",
+                    f"pending_question = NULL, error_message = NULL, error_code = NULL, "
+                    f"updated_at = now() WHERE id = %s",
                     (status, session_id),
                 )
-            elif error:
+            elif error is not None:
+                ec = error_code or "agent_error"
                 cur.execute(
                     f"UPDATE {SCHEMA}.sessions "
-                    f"SET status = %s, error_message = %s, "
+                    f"SET status = %s, error_message = %s, error_code = %s, "
                     f"pending_question = NULL, updated_at = now() WHERE id = %s",
-                    (status, error, session_id),
+                    (status, error, ec, session_id),
+                )
+            elif status == "executing":
+                cur.execute(
+                    f"UPDATE {SCHEMA}.sessions "
+                    f"SET status = %s, error_message = NULL, error_code = NULL, "
+                    f"updated_at = now() WHERE id = %s",
+                    (status, session_id),
                 )
             else:
                 cur.execute(
@@ -605,9 +892,11 @@ def _update_session_status(pool, session_id: str, status: str, error: str | None
 def _save_completed(pool, session: dict, yaml_content: str, markdown: str) -> str:
     """Save completed metadata. Returns the primary completed row's id.
 
-    For multi-table sessions: saves one combined row (table_fqn=NULL) plus
-    per-table rows. For single-table: one row with table_fqn set.
+    For multi-table sessions: one combined row (table_fqn=NULL) plus per-table rows.
+    For single-table: one row with table_fqn set. Reuses progressive draft row when
+    ``library_artifact_id`` is set.
     """
+    session = _load_session(pool, str(session["id"])) or session
     table_ref = session.get("table_ref", {})
     tables: list[dict] = []
     if table_ref.get("tables"):
@@ -621,74 +910,109 @@ def _save_completed(pool, session: dict, yaml_content: str, markdown: str) -> st
 
     multi = len(tables) > 1
     tpl_ver = session.get("template_version")
+    sid = str(session["id"])
+    uid = session["user_email"]
+    aid = session.get("library_artifact_id")
+    tr_json = json.dumps(table_ref)
 
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             if multi:
-                # Combined row
-                cur.execute(
-                    f"INSERT INTO {SCHEMA}.completed_metadata "
-                    f"(session_id, user_email, template_type, template_version, table_ref, "
-                    f" yaml_content, markdown_content, table_fqn) "
-                    f"VALUES (%s, %s, %s, %s, %s, %s, %s, NULL) RETURNING id",
-                    (
-                        str(session["id"]),
-                        session["user_email"],
-                        session["template_type"],
-                        tpl_ver,
-                        json.dumps(table_ref),
-                        yaml_content,
-                        markdown,
-                    ),
-                )
-                combined_id = str(cur.fetchone()["id"])
+                if aid:
+                    cur.execute(
+                        f"UPDATE {SCHEMA}.completed_metadata "
+                        f"SET yaml_content = %s, markdown_content = %s, "
+                        f"artifact_status = %s, updated_at = now() "
+                        f"WHERE id = %s AND session_id = %s::uuid AND user_email = %s",
+                        (yaml_content, markdown, ARTIFACT_COMPLETE, str(aid), sid, uid),
+                    )
+                    combined_id = str(aid)
+                else:
+                    cur.execute(
+                        f"INSERT INTO {SCHEMA}.completed_metadata "
+                        f"(session_id, user_email, template_type, template_version, table_ref, "
+                        f" yaml_content, markdown_content, table_fqn, artifact_status) "
+                        f"VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s) RETURNING id",
+                        (
+                            sid,
+                            uid,
+                            session["template_type"],
+                            tpl_ver,
+                            tr_json,
+                            yaml_content,
+                            markdown,
+                            ARTIFACT_COMPLETE,
+                        ),
+                    )
+                    combined_id = str(cur.fetchone()["id"])
+                    cur.execute(
+                        f"UPDATE {SCHEMA}.sessions SET library_artifact_id = %s, updated_at = now() "
+                        f"WHERE id = %s::uuid",
+                        (combined_id, sid),
+                    )
 
-                # Per-table rows (best-effort split; fall back to full YAML per table)
                 per_table_yamls = _split_yaml_per_table(yaml_content, tables)
                 for tbl in tables:
                     fqn = f"{tbl.get('catalog', '')}.{tbl.get('schema', '')}.{tbl.get('table', '')}"
                     tbl_yaml = per_table_yamls.get(fqn, yaml_content)
-                    tbl_md = yaml_to_markdown(tbl_yaml, session["template_type"])
+                    tbl_md, _ok = safe_yaml_to_markdown(tbl_yaml, session["template_type"])
                     cur.execute(
                         f"INSERT INTO {SCHEMA}.completed_metadata "
                         f"(session_id, user_email, template_type, template_version, table_ref, "
-                        f" yaml_content, markdown_content, table_fqn) "
-                        f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                        f" yaml_content, markdown_content, table_fqn, artifact_status) "
+                        f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                         (
-                            str(session["id"]),
-                            session["user_email"],
+                            sid,
+                            uid,
                             session["template_type"],
                             tpl_ver,
-                            json.dumps(table_ref),
+                            tr_json,
                             tbl_yaml,
                             tbl_md,
                             fqn,
+                            ARTIFACT_COMPLETE,
                         ),
                     )
             else:
-                # Single table
                 fqn = None
                 if tables:
                     t = tables[0]
                     fqn = f"{t.get('catalog', '')}.{t.get('schema', '')}.{t.get('table', '')}"
-                cur.execute(
-                    f"INSERT INTO {SCHEMA}.completed_metadata "
-                    f"(session_id, user_email, template_type, template_version, table_ref, "
-                    f" yaml_content, markdown_content, table_fqn) "
-                    f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                    (
-                        str(session["id"]),
-                        session["user_email"],
-                        session["template_type"],
-                        tpl_ver,
-                        json.dumps(table_ref),
-                        yaml_content,
-                        markdown,
-                        fqn,
-                    ),
-                )
-                combined_id = str(cur.fetchone()["id"])
+                if aid:
+                    cur.execute(
+                        f"UPDATE {SCHEMA}.completed_metadata "
+                        f"SET yaml_content = %s, markdown_content = %s, "
+                        f"artifact_status = %s, updated_at = now() "
+                        f"WHERE id = %s AND session_id = %s::uuid AND user_email = %s",
+                        (yaml_content, markdown, ARTIFACT_COMPLETE, str(aid), sid, uid),
+                    )
+                    combined_id = str(aid)
+                else:
+                    cur.execute(
+                        f"INSERT INTO {SCHEMA}.completed_metadata "
+                        f"(session_id, user_email, template_type, template_version, table_ref, "
+                        f" yaml_content, markdown_content, table_fqn, artifact_status) "
+                        f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                        (
+                            sid,
+                            uid,
+                            session["template_type"],
+                            tpl_ver,
+                            tr_json,
+                            yaml_content,
+                            markdown,
+                            fqn,
+                            ARTIFACT_COMPLETE,
+                        ),
+                    )
+                    combined_id = str(cur.fetchone()["id"])
+                    cur.execute(
+                        f"UPDATE {SCHEMA}.sessions SET library_artifact_id = %s, updated_at = now() "
+                        f"WHERE id = %s::uuid",
+                        (combined_id, sid),
+                    )
         conn.commit()
+
     return combined_id
 
 

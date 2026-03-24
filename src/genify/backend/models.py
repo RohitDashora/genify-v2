@@ -89,7 +89,9 @@ class SessionResponse(BaseModel):
     conversation: list[Any]
     output_format: str
     error_message: Optional[str] = None
+    error_code: Optional[str] = None
     pending_question: Optional[dict[str, Any]] = None
+    library_artifact_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
@@ -102,6 +104,7 @@ class SessionListItem(BaseModel):
     status: str
     table_ref: Any
     current_step: int
+    library_artifact_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
@@ -126,6 +129,7 @@ class CompletedResponse(BaseModel):
     markdown_content: Optional[str] = None
     table_fqn: Optional[str] = None
     version: int
+    artifact_status: str = "complete"
     created_at: datetime
     updated_at: datetime
 
@@ -136,6 +140,7 @@ class CompletedListItem(BaseModel):
     table_ref: Any
     table_fqn: Optional[str] = None
     version: int
+    artifact_status: str = "complete"
     created_at: datetime
     updated_at: datetime
 

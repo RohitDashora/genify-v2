@@ -61,6 +61,9 @@ class YamlMergeConfig:
     merge_max_retries: int = 2
     nested_validation: str = "strip"  # off | strip
     canonical_json_enabled: bool = False
+    format_on_persist_enabled: bool = False
+    format_dump_width: int = 120
+    format_multiline_literals: bool = False
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,9 @@ def _build_config(raw: dict) -> AppConfig:
         merge_max_retries=int(ym_raw.get("merge_max_retries", 2)),
         nested_validation=str(ym_raw.get("nested_validation", "strip")).lower(),
         canonical_json_enabled=bool(ym_raw.get("canonical_json_enabled", False)),
+        format_on_persist_enabled=bool(ym_raw.get("format_on_persist_enabled", False)),
+        format_dump_width=int(ym_raw.get("format_dump_width", 120)),
+        format_multiline_literals=bool(ym_raw.get("format_multiline_literals", False)),
     )
 
     mcp_servers = tuple(

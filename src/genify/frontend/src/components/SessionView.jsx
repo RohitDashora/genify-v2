@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ClipboardCopy, Download, Loader2, BookMarked } from 'lucide-react'
 import { fetchJSON, connectSSE } from '../api'
 import TracePanel from './TracePanel'
+import ConfirmDialog from './ConfirmDialog'
 import SessionPageHeader from './SessionPageHeader'
 import SessionTranscript from './SessionTranscript'
 import QuestionComposer from './QuestionComposer'
@@ -17,6 +18,13 @@ const STRATEGY_LABELS = {
 }
 
 const TRACE_CAP = 500
+
+const SSE_ERROR_USER = {
+  agent_error:
+    'The agent hit an unexpected issue. Try Retry section, Restart, or open the Library to edit saved YAML.',
+  template_not_found: 'The active template for this session is missing. Restart or start a new session.',
+  not_found: 'Session not found.',
+}
 
 function prefersReducedMotion() {
   if (typeof window === 'undefined' || !window.matchMedia) return false
@@ -75,6 +83,9 @@ export default function SessionView() {
   const [streamWarning, setStreamWarning] = useState(false)
   const [copiedYaml, setCopiedYaml] = useState(false)
   const [retryingSection, setRetryingSection] = useState(false)
+  const [restarting, setRestarting] = useState(false)
+  const [restartOpen, setRestartOpen] = useState(false)
+  const [streamLibraryId, setStreamLibraryId] = useState(null)
   const [showJumpLatest, setShowJumpLatest] = useState(false)
   const [ariaQuestion, setAriaQuestion] = useState('')
 
@@ -181,6 +192,7 @@ export default function SessionView() {
     setShowJumpLatest(false)
     lastQuestionPauseKeyRef.current = ''
     esRef.current?.close()
+    setStreamLibraryId(null)
   }, [id])
 
   useEffect(() => {
@@ -219,11 +231,16 @@ export default function SessionView() {
       setActivityLine('')
       setYamlContent((y) => y || previewYamlFromSession(session))
     }
-    if (session.status === 'failed' && !terminalFailHandledRef.current) {
-      terminalFailHandledRef.current = true
-      setAgentWorking(false)
-      setActivityLine('')
-      addMessage('error', session.error_message || 'Session failed', 'error')
+    if (session.status === 'failed') {
+      const py = previewYamlFromSession(session)
+      if (py) setYamlContent(py)
+      if (!terminalFailHandledRef.current) {
+        terminalFailHandledRef.current = true
+        setAgentWorking(false)
+        setActivityLine('')
+        const em = session.error_message || 'This session stopped with an error.'
+        addMessage('error', em, 'error')
+      }
     }
   }, [session, addMessage])
 
@@ -310,6 +327,7 @@ export default function SessionView() {
       },
       onSectionComplete: (d) => {
         setActivityLine(`${d.section} done (${d.step}/${d.total})`)
+        queryClient.invalidateQueries({ queryKey: ['session', id] })
       },
       onQuestion: (d) => {
         if (streamErrTimer.current) clearTimeout(streamErrTimer.current)
@@ -331,20 +349,25 @@ export default function SessionView() {
           if (prev.some((m) => m.role === 'assistant' && m.content === text)) return prev
           return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: text }]
         })
+        queryClient.invalidateQueries({ queryKey: ['session', id] })
       },
       onComplete: (d) => {
         setYamlContent((prev) => d.yaml || prev)
         setIsComplete(true)
         setAgentWorking(false)
         setActivityLine('')
-        if (d.completed_id) completedIdRef.current = d.completed_id
+        if (d.completed_id) {
+          completedIdRef.current = d.completed_id
+          setStreamLibraryId(d.completed_id)
+        }
         if (!completionBannerAddedRef.current) {
           completionBannerAddedRef.current = true
-          addMessage(
-            'assistant',
-            'Your metadata is ready. Use **Show YAML** to review or download.',
-            'success',
-          )
+          let doneText =
+            'Your metadata is ready. Use **Show YAML** to review or download.'
+          if (d.markdown_export_failed && d.markdown_export_message) {
+            doneText += ` ${d.markdown_export_message}`
+          }
+          addMessage('assistant', doneText, 'success')
         }
         queryClient.invalidateQueries({ queryKey: ['session', id] })
         queryClient.invalidateQueries({ queryKey: ['sessions'] })
@@ -353,11 +376,15 @@ export default function SessionView() {
       onError: (d) => {
         setAgentWorking(false)
         setActivityLine('')
-        const msg =
-          d.code === 'yaml_merge_invalid'
-            ? `${d.message || 'YAML merge failed'}${d.section_key ? ` (${d.section_key})` : ''}`
-            : d.message || 'Something went wrong'
+        const code = d.code || ''
+        let msg = d.message || 'Something went wrong'
+        if (code === 'yaml_merge_invalid' && d.message) {
+          msg = `${d.message}${d.section_key ? ` (${d.section_key})` : ''}`
+        } else if (SSE_ERROR_USER[code]) {
+          msg = SSE_ERROR_USER[code]
+        }
         addMessage('error', msg, 'error')
+        queryClient.invalidateQueries({ queryKey: ['session', id] })
       },
       onDisconnect: () => {},
     }),
@@ -461,7 +488,7 @@ export default function SessionView() {
 
   const handleSaveEdit = async () => {
     try {
-      let targetId = completedIdRef.current
+      let targetId = session?.library_artifact_id || completedIdRef.current
       if (!targetId) {
         const rows = await fetchJSON(`/sessions/${id}/completed`)
         if (rows?.length) targetId = rows[0].id
@@ -497,11 +524,52 @@ export default function SessionView() {
     return `Section ${cur} of ${total}`
   }, [session, isComplete])
 
+  const retryDisabledReason = useMemo(() => {
+    if (!session) return 'Session not loaded.'
+    if (session.status === 'complete') {
+      return 'This session is complete. Use Restart to run from the beginning.'
+    }
+    if (session.status === 'waiting_for_user') return null
+    const cs = session.current_step ?? 0
+    if (cs < 1) return 'No completed section to roll back yet.'
+    return null
+  }, [session])
+
+  const openLibraryId = session?.library_artifact_id || streamLibraryId
+
+  const handleRestart = useCallback(async () => {
+    if (!id) return
+    setRestartOpen(false)
+    setRestarting(true)
+    try {
+      await fetchJSON(`/sessions/${id}/restart`, { method: 'POST', body: '{}' })
+      terminalFailHandledRef.current = false
+      completionBannerAddedRef.current = false
+      setIsComplete(false)
+      setQuestion(null)
+      lastQuestionPauseKeyRef.current = ''
+      setYamlContent('')
+      completedIdRef.current = null
+      setStreamLibraryId(null)
+      includePlanRef.current = true
+      sessionPlanFromStreamRef.current = false
+      await queryClient.invalidateQueries({ queryKey: ['session', id] })
+      await queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      setStreamEpoch((e) => e + 1)
+      addMessage('system', 'Session restarted. Reconnecting…')
+    } catch (e) {
+      setAnswerBanner(e.message || 'Restart failed')
+    } finally {
+      setRestarting(false)
+    }
+  }, [id, queryClient, addMessage])
+
   const handleRetrySection = useCallback(async () => {
     if (!id) return
     setRetryingSection(true)
     try {
       await fetchJSON(`/sessions/${id}/retry-section`, { method: 'POST', body: '{}' })
+      terminalFailHandledRef.current = false
       await queryClient.invalidateQueries({ queryKey: ['session', id] })
       setStreamEpoch((e) => e + 1)
     } catch (e) {
@@ -560,13 +628,11 @@ export default function SessionView() {
         yamlContent={yamlContent}
         onCopyYaml={copyYaml}
         copiedYaml={copiedYaml}
-        onRetrySection={
-          !isComplete &&
-          (session.status === 'executing' || session.status === 'waiting_for_user')
-            ? handleRetrySection
-            : undefined
-        }
+        onRetrySection={handleRetrySection}
         retryingSection={retryingSection}
+        retryDisabledReason={retryDisabledReason}
+        onRestart={() => setRestartOpen(true)}
+        restarting={restarting}
         onBack={() => navigate('/')}
         streamWarning={streamWarning && !isComplete}
       />
@@ -637,50 +703,82 @@ export default function SessionView() {
         />
       )}
 
-      {isComplete && (
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={copyYaml}
-            className="px-4 py-2 rounded-lg bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 inline-flex items-center gap-2"
+      <div
+        className="flex flex-wrap gap-3 pt-3 border-t border-border-subtle"
+        role="navigation"
+        aria-label="Session actions"
+      >
+        <button
+          type="button"
+          onClick={copyYaml}
+          disabled={!yamlContent?.trim()}
+          className="px-4 py-2 rounded-lg bg-brand-500 text-white text-sm font-medium hover:bg-brand-600 inline-flex items-center gap-2 disabled:opacity-40"
+        >
+          <ClipboardCopy className="w-4 h-4" aria-hidden />
+          {copiedYaml ? 'Copied' : 'Copy YAML'}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const blob = new Blob([yamlContent || ''], { type: 'text/yaml' })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `${(tableLabel || 'metadata').replace(/\./g, '_')}.yaml`
+            a.click()
+            URL.revokeObjectURL(url)
+          }}
+          disabled={!yamlContent?.trim()}
+          className="px-4 py-2 rounded-lg border border-border-subtle text-sm font-medium hover:border-gray-400 inline-flex items-center gap-2 disabled:opacity-40"
+        >
+          <Download className="w-4 h-4" aria-hidden />
+          Download .yaml
+        </button>
+        {openLibraryId ? (
+          <Link
+            to={`/library/${openLibraryId}`}
+            className="px-4 py-2 rounded-lg border border-border-subtle text-sm font-medium hover:border-gray-400 inline-flex items-center gap-2 no-underline text-gray-700"
           >
-            <ClipboardCopy className="w-4 h-4" aria-hidden />
-            {copiedYaml ? 'Copied' : 'Copy YAML'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const blob = new Blob([yamlContent], { type: 'text/yaml' })
-              const url = URL.createObjectURL(blob)
-              const a = document.createElement('a')
-              a.href = url
-              a.download = `${tableLabel.replace(/\./g, '_')}.yaml`
-              a.click()
-              URL.revokeObjectURL(url)
-            }}
-            className="px-4 py-2 rounded-lg border border-border-subtle text-sm font-medium hover:border-gray-400 inline-flex items-center gap-2"
-          >
-            <Download className="w-4 h-4" aria-hidden />
-            Download .yaml
-          </button>
-          {completedIdRef.current && (
-            <Link
-              to={`/library/${completedIdRef.current}`}
-              className="px-4 py-2 rounded-lg border border-border-subtle text-sm font-medium hover:border-gray-400 inline-flex items-center gap-2 no-underline text-gray-700"
+            <BookMarked className="w-4 h-4" aria-hidden />
+            Open in Library
+          </Link>
+        ) : (
+          <span className="inline-flex flex-col gap-0.5">
+            <button
+              type="button"
+              disabled
+              title="A Library draft is created after the first saved progress. Complete the session or wait for the agent to save."
+              aria-describedby="session-open-library-hint"
+              className="px-4 py-2 rounded-lg border border-border-subtle text-sm font-medium inline-flex items-center gap-2 text-gray-400 cursor-not-allowed"
             >
               <BookMarked className="w-4 h-4" aria-hidden />
               Open in Library
-            </Link>
-          )}
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="px-4 py-2 rounded-lg border border-border-subtle text-sm font-medium hover:border-gray-400"
-          >
-            Back to Home
-          </button>
-        </div>
-      )}
+            </button>
+            <span id="session-open-library-hint" className="sr-only">
+              A Library draft is created after the first saved progress. Complete the session or wait
+              for the agent to save.
+            </span>
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          className="px-4 py-2 rounded-lg border border-border-subtle text-sm font-medium hover:border-gray-400"
+        >
+          Back to Home
+        </button>
+      </div>
+
+      <ConfirmDialog
+        open={restartOpen}
+        title="Restart session?"
+        description="This clears plan, progress, and gathered context for this session. In-progress Library drafts linked to it are removed; completed Library items stay saved."
+        confirmLabel="Restart"
+        cancelLabel="Cancel"
+        danger
+        onConfirm={handleRestart}
+        onCancel={() => setRestartOpen(false)}
+      />
     </div>
   )
 }

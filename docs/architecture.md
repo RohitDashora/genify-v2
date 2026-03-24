@@ -298,9 +298,9 @@ High-level UX goals—transcript-first session, responsive shell, progressive di
 |------|-----------------------------------------------|--------|
 | **Shell** | `App.jsx`, `layout/AppShell.jsx`, `layout/AppSidebar.jsx`, `ScrollToTop.jsx`, `PageSkeleton.jsx`, `NotFound.jsx` | **Desktop:** persistent left sidebar (~240px) — **Home**, **Library**, **Templates** — plus full-width main (`flex-1 min-w-0`). **&lt; md:** hamburger + slide-over drawer + backdrop; drawer closes on route change. No `max-w-6xl` cap on workspace. |
 | **Home** | `Home.jsx`, `CatalogBrowser.jsx`, `SessionLauncher.jsx`, `SessionList.jsx` | Catalog via TanStack Query; **Select Tables** list: comment `line-clamp` preview + full text on hover; compact table-type pill; table filter + select visible/clear; launcher; session list filters, relative `updated_at`, `ConfirmDialog` for delete. **`HelpHint`** on section titles where useful. |
-| **Library** | `library/LibraryLayout.jsx`, `library/LibraryList.jsx`, `library/LibraryDetail.jsx` | **`/library`** master–detail on `lg+` (card list + outlet). **`/library/:completedId`** detail: YAML \| Markdown toggle, CodeMirror edit, validate (`js-yaml`), Save / Revert, Copy YAML / Copy Markdown. List: search by name, **Table comment** / **Genie** filters, sort by updated. Cards show `table_fqn` or **Combined** for multi-table sessions. Mobile: stacked list ↔ detail with back. |
+| **Library** | `library/LibraryLayout.jsx`, `library/LibraryList.jsx`, `library/LibraryDetail.jsx` | **`/library`** master–detail on `lg+` (card list + outlet). **`/library/:completedId`** detail: YAML \| Markdown toggle, CodeMirror with **lint-only** YAML diagnostics (Save allowed even when invalid), Save / Revert, Copy YAML / Copy Markdown. **`PUT /completed/{id}`** detaches the row (`session_id` NULL) and clears `sessions.library_artifact_id` when it matched. List: search, **status** chips (All / In progress / Complete / Needs attention), **Table comment** / **Genie** filters, sort by updated; cards show **artifact** status pill. Mobile: stacked list ↔ detail with back. |
 | **Templates** | `templates/TemplatesLayout.jsx`, `templates/TemplateList.jsx`, `templates/TemplateDetail.jsx` | **`/templates`** list + outlet; **`/templates/new`** create; **`/templates/:templateId`** edit. Search, type filters, version sort; **Default** badge; YAML editor with Upload, Copy YAML, Save, Revert, **Set as default**, **Save as new version**. |
-| **Session** | `SessionView.jsx`, `SessionPageHeader.jsx`, `SessionTranscript.jsx`, `QuestionComposer.jsx`, `YamlPanel.jsx`, `TracePanel.jsx`, `TranscriptMarkdown.jsx` | Status pill; markdown transcript (dimmed while agent working); **`QuestionComposer`**: full question in transcript only; suggested reply read-only panel + Use/Send suggestion + textarea (draft preserved on same-pause `question` replay; **EventSource** closed after `question`); YAML in CodeMirror; trace panel; stream warning as header **WifiOff** chip + debounced `onerror` (suppressed while `question` active); jump-to-latest when scrolled up. **Back** in header **hidden on `md+`** (sidebar provides nav). **`complete` SSE** may include **`completed_id`** → **Open in Library** + correct **`PUT /completed/{id}`** on YAML save (via ref or `GET /sessions/{id}/completed`). |
+| **Session** | `SessionView.jsx`, `SessionPageHeader.jsx`, `SessionTranscript.jsx`, `QuestionComposer.jsx`, `YamlPanel.jsx`, `TracePanel.jsx`, `TranscriptMarkdown.jsx` | Status pill; **Restart** (confirm) clears plan/YAML/cache; **Retry section** always visible with disabled state + accessible reason when not applicable; **failed** hydrates YAML from `GET /api/sessions/{id}`; footer **always** shows Copy / Download / Open in Library (`library_artifact_id` or `completed_id`) / Back. Transcript + **`QuestionComposer`** as before; **`complete`** may flag **`markdown_export_failed`**. SSE **`error`** uses **`code`** (`yaml_merge_invalid`, `agent_error`, …) with user-safe **`message`** (no raw stack traces). Home list includes **`library_artifact_id`** → **Open draft in Library**. **`DELETE /sessions/{id}`** removes linked **draft** `completed_metadata` rows (`in_progress`, `failed`, `merge_error`) only. |
 | **Shared** | `HelpHint.jsx`, `utils/tableRef.js` | Contextual **?** tooltips (hover + focus-within). Shared **table label** formatting for session + library cards. |
 
 Screenshots and UX intent: **[ui-design.md](ui-design.md)**, **[product-overview.md](product-overview.md#screenshots)**.
@@ -315,11 +315,11 @@ Shared API: [`api.js`](../src/genify/frontend/src/api.js) (`fetchJSON`, `connect
 | `thinking` | Sparse section-level hint (e.g. partial fill); optional subtitle in UI. |
 | `plan` | Plan payload (steps, counts); UI humanizes strategies. |
 | `yaml_chunk` | Incremental YAML for streaming preview while the LLM generates a section. |
-| `full_yaml` | Authoritative merged YAML after validation (`generated_yaml` + optional partial preview when `is_partial` is true). Client should prefer this over accumulating `yaml_chunk`. |
+| `full_yaml` | Authoritative merged YAML after validation (`generated_yaml` + optional partial preview when `is_partial` is true). Client should prefer this over accumulating `yaml_chunk`. When **`yaml_merge.format_on_persist_enabled`** is on, persisted / emitted full-document YAML may be a re-dumped representation (same parse semantics). |
 | `section_complete` | Step finished. |
 | `question` | Interactive pause; client closes SSE after handling, POSTs answer, then opens a **new** SSE stream to resume. |
-| `complete` | Final YAML + session id; optional **`completed_id`** (UUID of the primary `completed_metadata` row — combined row for multi-table, or the single row for one table). Client uses it for Library deep link and for saving YAML edits without guessing by `template_type`. |
-| `error` | Failure. |
+| `complete` | Final YAML + session id; optional **`completed_id`**; optional **`markdown_export_failed`** + **`markdown_export_message`** when Markdown conversion was best-effort only. |
+| `error` | Failure; payload includes **`code`** (e.g. **`yaml_merge_invalid`**, **`agent_error`**, **`failed`**) and a short user-facing **`message`**. Server logs full exceptions separately. |
 | `trace` | Verbose diagnostic log only (categories e.g. `tool`, `llm`, `plan`, `system`); Activity trace panel only. |
 
 Client registration: [`src/genify/frontend/src/api.js`](../src/genify/frontend/src/api.js) `connectSSE` (`EventSource` listeners + optional `onOpen`).
@@ -331,16 +331,16 @@ Client registration: [`src/genify/frontend/src/api.js`](../src/genify/frontend/s
 | Table | Purpose |
 |-------|---------|
 | `genify.templates` | Versioned YAML templates |
-| `genify.sessions` | Session state, context cache, plan, conversation |
-| `genify.completed_metadata` | Saved outputs after a session completes: YAML + derived Markdown |
+| `genify.sessions` | Session state, context cache, plan, conversation; **`library_artifact_id`** points at the primary progressive Library row; **`error_code`** complements **`error_message`** |
+| `genify.completed_metadata` | YAML + derived Markdown; **`artifact_status`** (`in_progress`, `complete`, `failed`, `merge_error`); progressive **draft** rows upserted during the run, finalized on complete |
 
 ### `completed_metadata` rows
 
 - **`table_fqn`** (`VARCHAR`, nullable): when set, this row is **per-table** (`catalog.schema.table`). When **NULL**, the row is the **combined** artifact for a **multi-table** session (full `generated_yaml` in one blob).
 - **Single-table session:** one insert with `table_fqn` set (no separate combined row).
-- **Multi-table session:** one **combined** row (`table_fqn` NULL) plus one row per table (`table_fqn` set). When the merged YAML is partitioned by top-level FQN keys, each per-table row stores **only the inner document** (same top-level shape as `table_comment` templates: `table_identity`, `core_description`, …) so `yaml_to_markdown` and the Library editor stay consistent. If keys do not match, each per-table row may still fall back to the full combined YAML.
+- **Multi-table session:** one **combined** row (`table_fqn` NULL) plus one row per table (`table_fqn` set). When the merged YAML is partitioned by top-level FQN keys, each per-table row stores **only the inner document** (same top-level shape as `table_comment` templates: `table_identity`, `core_description`, …) so the Library YAML editor and stored blob stay aligned. **`safe_yaml_to_markdown`** ([`output_converter.py`](../src/genify/backend/llm/output_converter.py)) turns that dict into Markdown by **walking the YAML hierarchy** (headings for keys, lists as items); for `table_comment`, a single-key FQN wrapper is **unwrapped** first. If keys do not match, each per-table row may still fall back to the full combined YAML.
 - **`GET /api/completed`** lists all rows for the user (Library cards). **`GET /api/sessions/{id}/completed`** returns rows for that session (ordered: combined first, then per-table by `table_fqn`).
-- **`PUT /api/completed/{id}`** updates one row and **recomputes** `markdown_content` server-side (`yaml_to_markdown`); YAML remains the source of truth.
+- **`PUT /api/completed/{id}`** updates one row, **recomputes** `markdown_content` via **`safe_yaml_to_markdown`** (never throws), **detaches** the row from the session (`session_id` NULL), and clears **`sessions.library_artifact_id`** when it pointed at this id. YAML remains the source of truth.
 
 Schema name is configurable under `config.lakebase.schema` in app config.
 
@@ -350,7 +350,8 @@ Schema name is configurable under `config.lakebase.schema` in app config.
 |--------|------|------|
 | `GET` | `/api/completed` | List items for current user (`table_fqn` included). |
 | `GET` | `/api/completed/{id}` | Full row (YAML + markdown). |
-| `PUT` | `/api/completed/{id}` | Body `{ "yaml_content": "..." }`; regenerates markdown. |
+| `PUT` | `/api/completed/{id}` | Body `{ "yaml_content": "..." }`; safe markdown regen; detaches from session. |
+| `POST` | `/api/sessions/{id}/restart` | Clears agent state; removes draft Library rows; detaches prior **`complete`** rows from this session id. |
 | `DELETE` | `/api/completed/{id}` | Remove one row. |
 | `GET` | `/api/sessions/{session_id}/completed` | All completed rows for that session (empty list if none). |
 

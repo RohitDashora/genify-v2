@@ -15,6 +15,7 @@ __pycache__/
 *.egg
 .Python
 pip-wheel-metadata/
+_run_output/
 
 # Node — never commit deps (Databricks: npm ci + build; upload excludes node_modules)
 node_modules/
@@ -91,3 +92,5 @@ __pypackages__/
 # Cursor IDE — entire directory ignored; shared rules/skills are not in git unless you
 # replace this with selective ignores — see docs/public-repo-checklist.md
 .cursor/
+_run_output/Table_markdown.md
+_run_output/table_yaml.yaml

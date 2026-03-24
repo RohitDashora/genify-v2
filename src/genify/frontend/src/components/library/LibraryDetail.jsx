@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import CodeMirror from '@uiw/react-codemirror'
 import { yaml as yamlLang } from '@codemirror/lang-yaml'
+import { linter, lintGutter } from '@codemirror/lint'
 import { githubLight } from '@uiw/codemirror-theme-github'
 import jsYaml from 'js-yaml'
 import {
@@ -29,11 +30,44 @@ export default function LibraryDetail() {
   const { completedId } = useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const extensions = useMemo(() => [yamlLang()], [])
+  const extensions = useMemo(() => {
+    const yamlLint = (view) => {
+      const doc = view.state.doc
+      const text = doc.toString()
+      try {
+        jsYaml.load(text)
+        return []
+      } catch (e) {
+        const mark = e.mark
+        let from = 0
+        let to = Math.min(1, text.length)
+        if (mark && typeof mark.line === 'number') {
+          try {
+            const line = doc.line(mark.line + 1)
+            const col = Math.min(mark.column ?? 0, Math.max(0, line.length))
+            from = line.from + col
+            to = Math.min(from + 1, doc.length)
+          } catch {
+            from = 0
+            to = Math.min(1, doc.length)
+          }
+        }
+        return [
+          {
+            from,
+            to,
+            severity: 'error',
+            message: String(e.message || 'Invalid YAML').split('\n')[0],
+          },
+        ]
+      }
+    }
+    return [yamlLang(), lintGutter(), linter(yamlLint)]
+  }, [])
 
   const [mode, setMode] = useState('yaml')
   const [draftYaml, setDraftYaml] = useState(null)
-  const [yamlError, setYamlError] = useState(null)
+  const [apiError, setApiError] = useState(null)
   const [saving, setSaving] = useState(false)
   const [copiedYaml, setCopiedYaml] = useState(false)
   const [copiedMd, setCopiedMd] = useState(false)
@@ -66,17 +100,13 @@ export default function LibraryDetail() {
 
   const handleYamlChange = useCallback((value) => {
     setDraftYaml(value)
-    try {
-      jsYaml.load(value)
-      setYamlError(null)
-    } catch (e) {
-      setYamlError(e.message?.split('\n')[0] || 'Invalid YAML')
-    }
+    setApiError(null)
   }, [])
 
   const handleSave = async () => {
-    if (!dirty || yamlError) return
+    if (!dirty) return
     setSaving(true)
+    setApiError(null)
     try {
       const updated = await fetchJSON(`/completed/${completedId}`, {
         method: 'PUT',
@@ -84,16 +114,15 @@ export default function LibraryDetail() {
       })
       queryClient.setQueryData(['completed', completedId], updated)
       setDraftYaml(null)
-      setYamlError(null)
     } catch (e) {
-      setYamlError(`Save failed: ${e.message}`)
+      setApiError(e.message || 'Save failed')
     }
     setSaving(false)
   }
 
   const handleRevert = () => {
     setDraftYaml(null)
-    setYamlError(null)
+    setApiError(null)
   }
 
   const copyToClipboard = (text, setCopied, timerRef) => {
@@ -212,7 +241,8 @@ export default function LibraryDetail() {
             <button
               type="button"
               onClick={handleSave}
-              disabled={!dirty || yamlError || saving}
+              disabled={!dirty || saving}
+              aria-label="Save YAML. Invalid YAML is allowed; fix warnings when you can."
               className="px-3 py-1.5 rounded-lg bg-brand-500 text-white text-xs font-medium hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
             >
               {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
@@ -290,10 +320,9 @@ export default function LibraryDetail() {
         </div>
       </div>
 
-      {/* Validation error */}
-      {yamlError && mode === 'yaml' && (
+      {apiError && (
         <div className="shrink-0 rounded-lg border border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger-700">
-          {yamlError}
+          {apiError}
         </div>
       )}
 
@@ -322,10 +351,13 @@ export default function LibraryDetail() {
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
-            {markdownFromServer ? (
+            {markdownFromServer?.trim() ? (
               <TranscriptMarkdown>{markdownFromServer}</TranscriptMarkdown>
             ) : (
-              <p className="text-sm text-gray-400">No markdown preview available.</p>
+              <p className="text-sm text-gray-500">
+                No markdown preview yet. Save YAML to refresh — conversion is best-effort and may stay
+                empty if the structure is unusual.
+              </p>
             )}
           </div>
         )}

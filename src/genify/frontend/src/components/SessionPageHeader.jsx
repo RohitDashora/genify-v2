@@ -1,4 +1,4 @@
-import { ArrowLeft, ClipboardCopy, Check, WifiOff, RotateCcw } from 'lucide-react'
+import { ArrowLeft, ClipboardCopy, Check, WifiOff, RotateCcw, RefreshCw } from 'lucide-react'
 import HelpHint from './HelpHint'
 
 const STREAM_WARNING_TOOLTIP =
@@ -12,6 +12,9 @@ const STATUS_PILL = {
   failed: 'bg-danger-100 text-danger-800',
 }
 
+const RETRY_HINT_ID = 'session-header-retry-reason'
+const RESTART_HINT_ID = 'session-header-restart-reason'
+
 export default function SessionPageHeader({
   tableLabel,
   session,
@@ -23,10 +26,16 @@ export default function SessionPageHeader({
   copiedYaml,
   onRetrySection,
   retryingSection = false,
+  retryDisabledReason = null,
+  onRestart,
+  restarting = false,
+  restartDisabledReason = null,
   onBack,
   streamWarning = false,
 }) {
   const status = session?.status
+  const retryDisabled = Boolean(retryDisabledReason)
+  const restartDisabled = Boolean(restartDisabledReason)
 
   return (
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -107,15 +116,48 @@ export default function SessionPageHeader({
           </span>
         )}
         {typeof onRetrySection === 'function' && (
-          <button
-            type="button"
-            onClick={onRetrySection}
-            disabled={retryingSection}
-            className="text-xs px-3 py-1.5 rounded-md border border-border-subtle hover:border-gray-400 inline-flex items-center gap-1 bg-surface disabled:opacity-50"
-          >
-            <RotateCcw className="w-3.5 h-3.5" aria-hidden />
-            {retryingSection ? 'Retrying…' : 'Retry section'}
-          </button>
+          <span className="inline-flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onRetrySection}
+              disabled={retryingSection || retryDisabled}
+              title={retryDisabled ? retryDisabledReason : undefined}
+              aria-describedby={retryDisabled ? RETRY_HINT_ID : undefined}
+              className="text-xs px-3 py-1.5 rounded-md border border-border-subtle hover:border-gray-400 inline-flex items-center gap-1 bg-surface disabled:opacity-50"
+            >
+              <RotateCcw className="w-3.5 h-3.5" aria-hidden />
+              {retryingSection ? 'Retrying…' : 'Retry section'}
+            </button>
+            {retryDisabled && retryDisabledReason && (
+              <span id={RETRY_HINT_ID} className="sr-only">
+                {retryDisabledReason}
+              </span>
+            )}
+          </span>
+        )}
+        {typeof onRestart === 'function' && (
+          <span className="inline-flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onRestart}
+              disabled={restarting || restartDisabled}
+              title={restartDisabled ? restartDisabledReason : undefined}
+              aria-describedby={restartDisabled ? RESTART_HINT_ID : undefined}
+              className="text-xs px-3 py-1.5 rounded-md border border-border-subtle hover:border-gray-400 inline-flex items-center gap-1 bg-surface disabled:opacity-50"
+            >
+              <RefreshCw className="w-3.5 h-3.5" aria-hidden />
+              {restarting ? 'Restarting…' : 'Restart'}
+            </button>
+            <HelpHint label="Restart session">
+              Clears plan and progress and starts fresh with the same session link. In-progress Library
+              drafts for this session are removed; completed Library items stay saved (detached).
+            </HelpHint>
+            {restartDisabled && restartDisabledReason && (
+              <span id={RESTART_HINT_ID} className="sr-only">
+                {restartDisabledReason}
+              </span>
+            )}
+          </span>
         )}
       </div>
     </div>

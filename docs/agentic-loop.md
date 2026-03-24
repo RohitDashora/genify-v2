@@ -61,7 +61,13 @@ Implementation docstring in `core.py`:
 5. Execute plan steps from `current_step`, streaming events  
 6. If interactive and a step needs input: emit **`question`**, set **`waiting_for_user`**, end the generator (stream ends)  
 7. On resume: user message is merged via **`incorporate_answer`**, then execution continues from the same step index  
-8. Finalize: YAML → Markdown, **`completed_metadata`**, **`complete`** SSE  
+8. Finalize: YAML → Markdown (**`safe_yaml_to_markdown`** — hierarchical mirror of the parsed YAML tree, best-effort), upsert/finalize **`completed_metadata`**, **`complete`** SSE (may include **`markdown_export_failed`**)  
+
+**Progressive Library:** `_save_step_progress` and `_save_waiting_state` upsert a **draft** `completed_metadata` row (combined YAML, **`artifact_status` = `in_progress`**) and set **`sessions.library_artifact_id`**. Finalize **updates** that row to **`complete`** when present instead of inserting a duplicate primary row.
+
+**Merge forgiveness:** `merge_section_output` is wrapped in **try/except**; on failure the session is **`failed`** with **`error_code` `yaml_merge_invalid`**, the SSE emits **`error`** with the same code, prior **`generated_yaml`** stays in the DB, and the Library draft is marked **`merge_error`**.
+
+**Restart:** `POST /api/sessions/{id}/restart` clears plan, YAML, conversation, cache, errors, and **`library_artifact_id`**; deletes **draft** `completed_metadata` for that session; sets **`session_id` NULL** on **`complete`** rows so Library history remains without stale links.
 
 ---
 
@@ -124,9 +130,13 @@ sequenceDiagram
 - On pause: **`_save_waiting_state`** stores **`pending_question`** and **`pending_section_yaml`** (draft only — not yet merged into `generated_yaml`), sets **`waiting_for_user`**, and the generator **returns** (client closes stream after `question` per UX contract).  
 - SSE: **`full_yaml`** carries the authoritative merged string (and optional partial preview); prefer it over **`yaml_chunk`** accumulation in the client.
 
+#### Canonical YAML format at persistence (optional)
+
+When **`config.yaml_merge.format_on_persist_enabled`** is true, **`core.py`** runs **`format_yaml_for_persistence`** in [`yaml_merge.py`](../src/genify/backend/agent/yaml_merge.py) immediately before persisting a **single merged** `generated_yaml` (step boundaries, finalize, merge-error Library upserts, and **`PUT /api/completed/{id}`**). Re-dump uses **`format_dump_width`** and optional **`format_multiline_literals`** (`|` for embedded newlines). **Fail-open:** parse errors leave the string unchanged; Activity **`trace`** may record apply, finalize-only “disabled”, or invalid-YAML skip. **`generated_json`** is written after the final formatted string when dual-write is enabled. Interactive **pending** preview for Library uses **formatted committed YAML + raw pending fragment**, never a parse of the concat.
+
 ### 4. Finalize
 
-- After all steps: **`yaml_to_markdown`**, **`_save_completed`**, session status **`complete`**, emit **`complete`** with optional **`completed_id`**.
+- After all steps: **`yaml_to_markdown`** (same hierarchical renderer for all template types; **`table_comment`** unwraps single-key FQN wrappers first), **`_save_completed`**, session status **`complete`**, emit **`complete`** with optional **`completed_id`**.
 
 ---
 

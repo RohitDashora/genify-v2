@@ -188,10 +188,12 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.sessions (
     context_cache    JSONB        DEFAULT '{{}}'::jsonb,
     output_format    VARCHAR(20)  DEFAULT 'yaml',
     error_message    TEXT,
+    error_code       VARCHAR(64),
     created_at       TIMESTAMPTZ  DEFAULT now(),
     updated_at       TIMESTAMPTZ  DEFAULT now(),
     completed_at     TIMESTAMPTZ,
-    pending_question JSONB
+    pending_question JSONB,
+    library_artifact_id UUID
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user
@@ -201,6 +203,9 @@ CREATE INDEX IF NOT EXISTS idx_sessions_status
 
 CREATE TABLE IF NOT EXISTS {SCHEMA}.completed_metadata (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- ON DELETE SET NULL keeps detached / orphaned rows if a session row disappears without
+    -- going through the app. Application code still runs an explicit DELETE of draft-status
+    -- rows in delete_session before removing the session (see backend/routes/sessions.py).
     session_id       UUID REFERENCES {SCHEMA}.sessions(id) ON DELETE SET NULL,
     user_email       VARCHAR(255) NOT NULL,
     template_type    VARCHAR(50)  NOT NULL,
@@ -211,7 +216,8 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.completed_metadata (
     table_fqn        VARCHAR(512),
     version          INTEGER      DEFAULT 1,
     created_at       TIMESTAMPTZ  DEFAULT now(),
-    updated_at       TIMESTAMPTZ  DEFAULT now()
+    updated_at       TIMESTAMPTZ  DEFAULT now(),
+    artifact_status  VARCHAR(32)  NOT NULL DEFAULT 'complete'
 );
 
 ALTER TABLE {SCHEMA}.completed_metadata ADD COLUMN IF NOT EXISTS table_fqn VARCHAR(512);
@@ -256,9 +262,35 @@ def init_db() -> None:
                         f"ALTER TABLE {SCHEMA}.completed_metadata "
                         f"ADD COLUMN IF NOT EXISTS template_version INTEGER"
                     )
+                    cur.execute(
+                        f"ALTER TABLE {SCHEMA}.completed_metadata "
+                        f"ADD COLUMN IF NOT EXISTS artifact_status VARCHAR(32) "
+                        f"NOT NULL DEFAULT 'complete'"
+                    )
+                    cur.execute(
+                        f"ALTER TABLE {SCHEMA}.sessions "
+                        f"ADD COLUMN IF NOT EXISTS library_artifact_id UUID"
+                    )
+                    cur.execute(
+                        f"ALTER TABLE {SCHEMA}.sessions "
+                        f"ADD COLUMN IF NOT EXISTS error_code VARCHAR(64)"
+                    )
                 conn.commit()
         except Exception as e:
             logger.warning(f"schema migration (sessions/completed extras): {e}")
+        try:
+            with pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"ALTER TABLE {SCHEMA}.sessions ADD CONSTRAINT "
+                        f"fk_sessions_library_artifact "
+                        f"FOREIGN KEY (library_artifact_id) "
+                        f"REFERENCES {SCHEMA}.completed_metadata(id) "
+                        f"ON DELETE SET NULL"
+                    )
+                conn.commit()
+        except Exception as e:
+            logger.debug(f"fk_sessions_library_artifact (may already exist): {e}")
         logger.info("Genify schema initialisation complete")
     except Exception as e:
         logger.error(f"DB init failed: {e}", exc_info=True)

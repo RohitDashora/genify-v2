@@ -4,6 +4,21 @@ export const TYPE_LABELS = {
   genie: 'Genie',
 }
 
+/** completed_metadata.artifact_status → list card pill */
+export const ARTIFACT_STATUS_LABELS = {
+  in_progress: 'In progress',
+  complete: 'Complete',
+  failed: 'Needs attention',
+  merge_error: 'Needs attention',
+}
+
+export const ARTIFACT_STATUS_FILTER = {
+  all: () => true,
+  in_progress: (s) => s === 'in_progress',
+  complete: (s) => s === 'complete',
+  needs_attention: (s) => s === 'failed' || s === 'merge_error',
+}
+
 export function templateLabel(templateType) {
   if (!templateType) return ''
   return TYPE_LABELS[templateType] || templateType

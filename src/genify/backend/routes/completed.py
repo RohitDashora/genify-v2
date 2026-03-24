@@ -5,6 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg.rows import dict_row
 
+from backend.agent.yaml_merge import format_yaml_for_persistence
+from backend.config import get_config
 from backend.db import get_pool, SCHEMA
 from backend.middleware import get_current_user
 from backend.models import CompletedListItem, CompletedResponse, CompletedUpdate
@@ -18,12 +20,6 @@ def _pool():
     if pool is None:
         raise HTTPException(503, detail="Database not available")
     return pool
-
-
-def _yaml_to_markdown(yaml_content: str, template_type: str = "table_comment") -> str:
-    """Convert YAML to markdown using the output converter."""
-    from backend.llm.output_converter import yaml_to_markdown
-    return yaml_to_markdown(yaml_content, template_type)
 
 
 @router.get("", response_model=list[CompletedListItem])
@@ -43,7 +39,7 @@ async def list_completed(
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 f"SELECT id, template_type, table_ref, table_fqn, version, "
-                f"created_at, updated_at "
+                f"artifact_status, created_at, updated_at "
                 f"FROM {SCHEMA}.completed_metadata {where} "
                 f"ORDER BY updated_at DESC",
                 params,
@@ -80,29 +76,45 @@ async def update_completed(
     """Update YAML content. Backend re-generates markdown and stores both."""
     pool = _pool()
 
-    # Look up template_type for proper markdown conversion
+    from backend.llm.output_converter import safe_yaml_to_markdown
+
+    cid = str(completed_id)
+    ym = get_config().yaml_merge
+    yaml_out, _, _ = format_yaml_for_persistence(
+        body.yaml_content,
+        enabled=ym.format_on_persist_enabled,
+        dump_width=ym.format_dump_width,
+        use_literal_blocks=ym.format_multiline_literals,
+    )
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 f"SELECT template_type FROM {SCHEMA}.completed_metadata "
                 f"WHERE id = %s AND user_email = %s",
-                (str(completed_id), user_email),
+                (cid, user_email),
             )
             existing = cur.fetchone()
-    if not existing:
-        raise HTTPException(404, detail="Completed metadata not found")
+            if not existing:
+                raise HTTPException(404, detail="Completed metadata not found")
 
-    markdown = _yaml_to_markdown(body.yaml_content, existing["template_type"])
-    with pool.connection() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
+            markdown, _ok = safe_yaml_to_markdown(
+                yaml_out,
+                existing["template_type"],
+            )
             cur.execute(
                 f"UPDATE {SCHEMA}.completed_metadata "
-                f"SET yaml_content = %s, markdown_content = %s, updated_at = now() "
+                f"SET yaml_content = %s, markdown_content = %s, "
+                f"session_id = NULL, updated_at = now() "
                 f"WHERE id = %s AND user_email = %s "
                 f"RETURNING *",
-                (body.yaml_content, markdown, str(completed_id), user_email),
+                (yaml_out, markdown, cid, user_email),
             )
             row = cur.fetchone()
+            cur.execute(
+                f"UPDATE {SCHEMA}.sessions SET library_artifact_id = NULL, updated_at = now() "
+                f"WHERE library_artifact_id = %s::uuid",
+                (cid,),
+            )
         conn.commit()
     if not row:
         raise HTTPException(404, detail="Completed metadata not found")

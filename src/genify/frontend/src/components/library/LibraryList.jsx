@@ -7,7 +7,14 @@ import { fetchJSON } from '../../api'
 import { formatCompletedLabel } from '../../utils/tableRef'
 import HelpHint from '../HelpHint'
 import MetadataBadges from './MetadataBadges'
-import { FILTER_CHIP_BASE, FILTER_CHIP_IDLE, FILTER_CHIP_SELECTED, TYPE_LABELS } from './metadataLabels'
+import {
+  ARTIFACT_STATUS_FILTER,
+  ARTIFACT_STATUS_LABELS,
+  FILTER_CHIP_BASE,
+  FILTER_CHIP_IDLE,
+  FILTER_CHIP_SELECTED,
+  TYPE_LABELS,
+} from './metadataLabels'
 
 const SORT_OPTIONS = [
   { value: 'updated', label: 'Updated' },
@@ -33,6 +40,7 @@ export default function LibraryList({ selectedId }) {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [filterTemplate, setFilterTemplate] = useState('all')
+  const [artifactFilter, setArtifactFilter] = useState('all')
   const [sortMode, setSortMode] = useState('updated')
 
   const { data: items, isLoading, isError, error } = useQuery({
@@ -52,6 +60,12 @@ export default function LibraryList({ selectedId }) {
     if (filterTemplate !== 'all') {
       list = list.filter((item) => item.template_type === filterTemplate)
     }
+    if (artifactFilter !== 'all') {
+      const pred = ARTIFACT_STATUS_FILTER[artifactFilter]
+      if (pred) {
+        list = list.filter((item) => pred(item.artifact_status || 'complete'))
+      }
+    }
     if (q) {
       list = list.filter((item) => {
         const fqn = item.table_fqn ? String(item.table_fqn).toLowerCase() : ''
@@ -68,7 +82,7 @@ export default function LibraryList({ selectedId }) {
       return a._label.localeCompare(b._label)
     })
     return sorted
-  }, [items, search, filterTemplate, sortMode])
+  }, [items, search, filterTemplate, artifactFilter, sortMode])
 
   return (
     <div className="flex flex-col flex-1 min-h-0 h-full max-h-full">
@@ -101,6 +115,32 @@ export default function LibraryList({ selectedId }) {
         </div>
 
         <div className="flex flex-col gap-2">
+          <div
+            className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-0.5 -mx-0.5 px-0.5"
+            role="tablist"
+            aria-label="Filter by status"
+          >
+            <span className="hidden sm:inline text-xs text-gray-500 shrink-0">Status</span>
+            {[
+              { id: 'all', label: 'All' },
+              { id: 'in_progress', label: 'In progress' },
+              { id: 'complete', label: 'Complete' },
+              { id: 'needs_attention', label: 'Needs attention' },
+            ].map((chip) => (
+              <button
+                key={chip.id}
+                type="button"
+                role="tab"
+                aria-selected={artifactFilter === chip.id}
+                onClick={() => setArtifactFilter(chip.id)}
+                className={`${FILTER_CHIP_BASE} shrink-0 ${
+                  artifactFilter === chip.id ? FILTER_CHIP_SELECTED : FILTER_CHIP_IDLE
+                }`}
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
           <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-0.5 -mx-0.5 px-0.5">
             <span className="hidden sm:inline text-xs text-gray-500 shrink-0">Type</span>
             <button
@@ -189,8 +229,20 @@ export default function LibraryList({ selectedId }) {
                 <p className="text-sm font-medium text-gray-900 truncate leading-tight" title={item._label}>
                   {item._label}
                 </p>
-                <div className="mt-1">
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
                   <MetadataBadges templateType={item.template_type} isCombined={item._isCombined} />
+                  <span
+                    className={`inline-flex items-center px-1.5 py-0 rounded-full text-[10px] font-semibold border ${
+                      item.artifact_status === 'complete'
+                        ? 'bg-success-50 text-success-800 border-success-200/80'
+                        : item.artifact_status === 'in_progress'
+                          ? 'bg-brand-50 text-brand-800 border-brand-200/80'
+                          : 'bg-warning-50 text-warning-900 border-warning-200/80'
+                    }`}
+                  >
+                    {ARTIFACT_STATUS_LABELS[item.artifact_status] ||
+                      ARTIFACT_STATUS_LABELS.complete}
+                  </span>
                 </div>
                 <p className="mt-1.5 text-[11px] text-gray-400 leading-snug">
                   <span className="inline-flex items-center gap-1">

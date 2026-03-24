@@ -18,7 +18,7 @@ Catalog and schema pickers, **Filter tables**, **Select visible** / **Clear**, a
 
 ## Screenshots — Library
 
-Search by table name; filters **All** / **Table comment** / **Genie**; sort (e.g. **Updated**). Cards show **`table_fqn`**, template type, version, and timestamps. Detail: **YAML** \| **Markdown**, CodeMirror, **Save** / **Revert**, copy actions.
+Search by table name; filters **All** / **In progress** / **Complete** / **Needs attention** (failed + merge_error), plus template type chips; sort (e.g. **Updated**). Cards show **`table_fqn`**, template type, **status** pill, version, and timestamps. Detail: **YAML** \| **Markdown**, CodeMirror with **lint squiggles** (no blocking parse banner; **Save** even if invalid), **Save** / **Revert**, copy actions; inline hint when Markdown is empty.
 
 ![Library — list and YAML editor](images/screenshot-library.png)
 
@@ -34,7 +34,7 @@ Split list + detail under [`components/templates/`](../src/genify/frontend/src/c
 
 **Two columns:** conversation / progress / **Activity trace** (collapsible) on the left; **Generated YAML** on the right with show/hide and copy.
 
-- **Status pill** — Created, Executing, Waiting For User, Complete — pairs with header text (`Table Comment | hands off | …`). **Section x of y** when applicable; **Retry section** rolls back the last step (see API).
+- **Status pill** — Created, Executing, Waiting For User, Complete, Failed — pairs with header text (`Table Comment | hands off | …`). **Section x of y** when applicable; **Retry section** is always shown (disabled + screen-reader reason when not applicable; supports **failed** after rollback); **Restart** confirms then clears state. **Footer** actions (Copy / Download / Open in Library / Back) stay visible for all states; **Open** is disabled with an accessible explanation until a Library draft id exists.
 - **Hands-off** — Gather → plan → section execution; trace shows MCP calls (`GATHER …`, `Using cached MCP context` on later phases).
 
 ![Session — hands-off MCP gather](images/screenshot-session-hands-off-gather.png)
@@ -84,7 +84,8 @@ Split list + detail under [`components/templates/`](../src/genify/frontend/src/c
 
 ## Library and editing
 
-- **Deep links:** `complete` SSE may include **`completed_id`** for Library routing and **`PUT /api/completed/{id}`**.
+- **Deep links:** `complete` SSE may include **`completed_id`**; **`GET /api/sessions`** includes **`library_artifact_id`** for progressive drafts. **`PUT /api/completed/{id}`** detaches the row from the session.
+- **409 answer errors:** Friendly copy for **`not_waiting_for_user`** and **`answer_already_queued`** (see `fetchJSON` + `SessionView`).
 
 ## Related files
 

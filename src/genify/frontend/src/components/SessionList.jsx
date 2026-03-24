@@ -2,7 +2,8 @@ import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { formatDistanceToNow } from 'date-fns'
-import { Loader2, RefreshCw, BellRing } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Loader2, RefreshCw, BellRing, BookMarked } from 'lucide-react'
 import { fetchJSON } from '../api'
 import ConfirmDialog from './ConfirmDialog'
 import HelpHint from './HelpHint'
@@ -230,6 +231,15 @@ export default function SessionList() {
                         ? 'Resume'
                         : 'Open'}
                   </button>
+                  {s.library_artifact_id && (
+                    <Link
+                      to={`/library/${s.library_artifact_id}`}
+                      className="text-xs px-3 py-1 rounded-md border border-border-subtle text-gray-700 hover:border-brand-300 inline-flex items-center gap-1 no-underline"
+                    >
+                      <BookMarked className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                      Open draft in Library
+                    </Link>
+                  )}
                   <button
                     type="button"
                     onClick={() => handleDeleteClick(s.id)}
@@ -247,7 +257,7 @@ export default function SessionList() {
       <ConfirmDialog
         open={pendingDeleteId != null}
         title="Delete session?"
-        description="This removes the session from your list. Generated YAML in Completed is not deleted."
+        description="Removes the session. In-progress Library drafts linked to it are deleted; detached Library items are kept."
         confirmLabel="Delete"
         cancelLabel="Cancel"
         danger

@@ -84,10 +84,17 @@ class EventStreamer:
         yaml_content: str,
         session_id: str,
         completed_id: str | None = None,
+        *,
+        markdown_export_failed: bool = False,
+        markdown_export_message: str = "",
     ) -> dict:
         payload = {"yaml": yaml_content, "session_id": session_id}
         if completed_id:
             payload["completed_id"] = completed_id
+        if markdown_export_failed:
+            payload["markdown_export_failed"] = True
+        if markdown_export_message:
+            payload["markdown_export_message"] = markdown_export_message
         return {"event": "complete", "data": json.dumps(payload)}
 
     def error(
